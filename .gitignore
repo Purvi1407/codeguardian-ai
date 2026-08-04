@@ -3,6 +3,6 @@ __pycache__/
 backend/venv/
 backend/.venv/
 .env
-backend/temp/
-backend/uploads/
+temp/
+uploads/
 .DS_Store
