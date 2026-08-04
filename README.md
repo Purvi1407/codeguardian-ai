@@ -1,12 +1,36 @@
-# CodeGuardian AI — Backend (Module 1 + 2)
+# CodeGuardian AI — AI-Powered SAST Agent
 
-AI-powered SAST agent. This slice implements:
+**Fewer findings. Higher confidence.**
+
+CodeGuardian scans a public GitHub repo, parses its source, runs a rule-based vulnerability engine, then uses an LLM to validate each candidate finding — cutting noisy static-analysis output down to the issues that actually matter.
+
+🔗 **Live demo:** [codeguardian-ai-ka1d.onrender.com](https://codeguardian-ai-ka1d.onrender.com/)
+📦 **Repo:** [github.com/Purvi1407/codeguardian-ai](https://github.com/Purvi1407/codeguardian-ai)
+
+> Note: this is hosted on Render's free tier, so the first request after a period of inactivity may take 30–60s while the instance spins back up.
+
+![CodeGuardian Full Validate mode showing candidates reduced to AI-verified findings, with the candidates-to-verified gauge bar visible](https://github.com/user-attachments/assets/1fd2ec77-acaf-4c84-b1e2-32200ba09d80)
+---
+
+## Repo structure
+
+```
+codeguardian-ai/
+├── backend/
+│   ├── app/               # FastAPI app: repo processor, parser, analyzer, AI validation, static UI
+│   └── requirements.txt
+├── Dockerfile
+├── tests/
+└── README.md
+```
+
+This slice implements:
 - **Module 1 — Repository Processor**: validates a GitHub URL, shallow-clones it into a temp dir, cleans up after itself (even on failure).
 - **Module 2 — Parser**: walks the repo, finds `.py`/`.ts`/`.tsx`/`.js`/`.jsx` files, and extracts functions/classes with line numbers.
   - Python uses the `ast` module — accurate line numbers, args, method/class attribution.
   - TS/JS uses regex for now (documented limitation — see `app/parser/js_ts_parser.py`). Swap for tree-sitter later if time allows.
 
-## Run it
+## Run it locally
 
 ```bash
 cd backend
@@ -22,6 +46,8 @@ curl -X POST http://localhost:8000/scan \
   -H "Content-Type: application/json" \
   -d '{"github_url": "https://github.com/pallets/flask"}'
 ```
+
+Or just use the live demo / local browser UI at `/` — no curl needed.
 
 Tested live against `pallets/flask` (83 files, 0 parse errors) and against invalid/nonexistent repo URLs (clean 400s, no orphaned temp dirs).
 
@@ -140,11 +166,14 @@ Added `app/analyzer/js_ts_rules.py`: 8 regex-based rules for JS/TS (SQL injectio
 
 Added `app/static/index.html` — a single-page frontend served at `GET /`. No build step, no separate frontend deployment: it's plain HTML/CSS/JS, fetch-calling the same `/analyze` and `/validate` endpoints, served by the same FastAPI app.
 
-**Run it**: start the server as usual, open `http://localhost:8000/` (not `/docs` — that's still the API explorer, `/` is now the actual product UI).
+**Run it**: start the server as usual, open `http://localhost:8000/` (not `/docs` — that's still the API explorer, `/` is now the actual product UI). Or just use the [live demo](https://codeguardian-ai-ka1d.onrender.com/) — same UI, already deployed.
 
 Two modes, exposed as a toggle:
 - **Quick scan** → calls `/analyze` (free, no API key, rule-based candidates only)
 - **Full validate** → calls `/validate` (uses your API key, AI-reviewed, shows verified + dismissed findings)
+
+![CodeGuardian UI with a dismissed finding expanded, showing the AI's rejection reason for transparency](https://github.com/user-attachments/assets/bda4c9d4-2b15-4ee9-b9c6-03cabb2c92f2)
+
 
 **Verified working**: `GET /` returns 200 with the correct HTML: confirmed `/health`, `/docs`, and `/analyze` all still work correctly and aren't shadowed by the new root route (the UI route is a specific `GET /`, not a catch-all mount, so it can't intercept other paths).
 
@@ -155,3 +184,7 @@ Two modes, exposed as a toggle:
 - **Why no framework (React/Next.js)?** Zero build step, zero deployment complexity — the whole UI is one static file the backend already serves. For a 2-endpoint tool with no client-side state beyond "what did the last scan return," a framework would add process without adding capability. This is a legitimate answer if asked "why not React" — not every UI needs one.
 - **The candidates → verified gauge bar** is the one deliberately designed element: it visualizes the core product philosophy ("fewer, higher-confidence findings") as an actual number you watch shrink, rather than just stating it in copy.
 - **Dismissed findings are visible but collapsed by default** — same reasoning as the API design: transparency without cluttering the primary view.
+
+## Deployment
+
+Deployed on [Render](https://render.com) via the included `Dockerfile`. Root directory is the repo root (no nested subfolder). Set `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL` / `OPENAI_MODEL` for the Groq-compatible free tier) as environment variables in the Render service settings — never commit these to the repo.
