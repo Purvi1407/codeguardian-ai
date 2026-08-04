@@ -1,0 +1,12 @@
+**/__pycache__
+**/*.pyc
+backend/venv
+backend/.venv
+.env
+.git
+.gitignore
+tests
+uploads
+backend/temp
+backend/uploads
+README.md

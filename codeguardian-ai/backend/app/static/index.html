@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CodeGuardian — AI SAST Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0F1420;
+    --surface:#161D2E;
+    --surface-2:#1D2740;
+    --text:#E8EAF0;
+    --text-muted:#8B93A7;
+    --signal:#F2A93B;
+    --verified:#4FD1A5;
+    --danger:#E5484D;
+    --medium:#F2A93B;
+    --low:#7FA0C4;
+    --hairline:#29334A;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+    line-height:1.5;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:0.001ms !important; transition-duration:0.001ms !important;}
+  }
+
+  a{color:inherit;}
+  :focus-visible{outline:2px solid var(--signal); outline-offset:2px;}
+
+  .wrap{max-width:840px; margin:0 auto; padding:32px 20px 96px;}
+
+  header.top{
+    display:flex; align-items:baseline; justify-content:space-between;
+    gap:16px; margin-bottom:28px; flex-wrap:wrap;
+  }
+  .brand{display:flex; align-items:center; gap:12px;}
+  .mark{
+    width:34px; height:34px; border-radius:8px;
+    background:linear-gradient(155deg, var(--signal), #C97A1E);
+    display:flex; align-items:center; justify-content:center;
+    flex-shrink:0;
+  }
+  .mark svg{width:18px; height:18px;}
+  .brand h1{
+    font-family:'Space Grotesk',sans-serif; font-size:1.35rem; font-weight:700;
+    margin:0; letter-spacing:-0.01em;
+  }
+  .tagline{
+    font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--text-muted);
+    margin:2px 0 0; letter-spacing:0.01em;
+  }
+  .modules{
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:var(--text-muted);
+    text-align:right;
+  }
+
+  .panel{
+    background:var(--surface); border:1px solid var(--hairline); border-radius:var(--radius);
+    padding:20px; margin-bottom:20px;
+  }
+
+  .run-row{display:flex; gap:10px; flex-wrap:wrap;}
+  input[type=text]{
+    flex:1 1 320px; min-width:0;
+    background:var(--surface-2); border:1px solid var(--hairline); color:var(--text);
+    font-family:'JetBrains Mono',monospace; font-size:0.9rem;
+    padding:12px 14px; border-radius:8px;
+  }
+  input[type=text]::placeholder{color:var(--text-muted);}
+  button.run{
+    background:var(--signal); color:#1A1200; border:none; border-radius:8px;
+    font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:0.92rem;
+    padding:12px 22px; cursor:pointer; white-space:nowrap;
+    transition:transform 0.1s ease, opacity 0.15s ease;
+  }
+  button.run:hover{opacity:0.92;}
+  button.run:active{transform:scale(0.98);}
+  button.run:disabled{opacity:0.5; cursor:not-allowed;}
+
+  .modes{display:flex; gap:18px; margin-top:14px; flex-wrap:wrap;}
+  .mode-opt{
+    display:flex; align-items:center; gap:8px; cursor:pointer;
+    font-size:0.86rem; color:var(--text-muted);
+  }
+  .mode-opt input{accent-color:var(--signal);}
+  .mode-opt.active{color:var(--text);}
+  .mode-hint{
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:var(--text-muted);
+    margin-top:10px;
+  }
+
+  .status{
+    display:none; align-items:center; gap:10px; margin-top:14px;
+    font-family:'JetBrains Mono',monospace; font-size:0.82rem; color:var(--text-muted);
+  }
+  .status.showing{display:flex;}
+  .pulse{
+    width:8px; height:8px; border-radius:50%; background:var(--signal);
+    animation:pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{opacity:1; transform:scale(1);}
+    50%{opacity:0.4; transform:scale(0.7);}
+  }
+
+  .error-panel{
+    display:none;
+    border:1px solid #4A2226; background:#231316; border-radius:var(--radius);
+    padding:18px 20px; margin-bottom:20px;
+  }
+  .error-panel.showing{display:block;}
+  .error-panel .label{
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; letter-spacing:0.04em;
+    color:var(--danger); text-transform:uppercase; margin-bottom:8px;
+  }
+  .error-panel pre{
+    font-family:'JetBrains Mono',monospace; font-size:0.82rem; color:#F3C9CB;
+    white-space:pre-wrap; word-break:break-word; margin:0;
+  }
+
+  .results{display:none;}
+  .results.showing{display:block;}
+
+  .meta-row{
+    display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px;
+    font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--text-muted);
+  }
+  .chip{
+    background:var(--surface); border:1px solid var(--hairline); border-radius:6px;
+    padding:5px 10px;
+  }
+
+  /* the signature gauge: candidates -> verified */
+  .gauge-panel{margin-bottom:22px;}
+  .gauge-label{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--text-muted);
+    margin-bottom:10px;
+  }
+  .gauge-label b{color:var(--text); font-weight:600;}
+  .gauge-track{
+    height:10px; border-radius:6px; background:var(--surface-2);
+    overflow:hidden; display:flex; border:1px solid var(--hairline);
+  }
+  .gauge-fill{
+    height:100%; background:linear-gradient(90deg, var(--verified), #2FA483);
+    transition:width 0.6s cubic-bezier(.2,.8,.2,1);
+  }
+  .gauge-caption{
+    font-size:0.8rem; color:var(--text-muted); margin-top:8px;
+  }
+  .gauge-caption b{color:var(--verified); font-weight:600;}
+
+  h2.section-title{
+    font-family:'Space Grotesk',sans-serif; font-size:0.95rem; font-weight:600;
+    margin:0 0 12px; display:flex; align-items:center; gap:8px;
+  }
+  .count-badge{
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:var(--text-muted);
+    background:var(--surface-2); border-radius:20px; padding:2px 9px;
+  }
+
+  .finding{
+    border:1px solid var(--hairline); border-radius:var(--radius);
+    background:var(--surface); margin-bottom:12px; overflow:hidden;
+  }
+  .finding-head{
+    display:flex; align-items:center; gap:12px; padding:14px 16px; cursor:pointer;
+  }
+  .sev{
+    font-family:'JetBrains Mono',monospace; font-size:0.68rem; font-weight:600;
+    letter-spacing:0.03em; text-transform:uppercase;
+    padding:3px 8px; border-radius:5px; flex-shrink:0;
+  }
+  .sev-high{background:rgba(229,72,77,0.15); color:var(--danger);}
+  .sev-medium{background:rgba(242,169,59,0.15); color:var(--medium);}
+  .sev-low{background:rgba(127,160,196,0.15); color:var(--low);}
+
+  .finding-title{font-weight:600; font-size:0.92rem; flex:1; min-width:0;}
+  .finding-loc{
+    font-family:'JetBrains Mono',monospace; font-size:0.76rem; color:var(--text-muted);
+    white-space:nowrap;
+  }
+  .chevron{color:var(--text-muted); transition:transform 0.15s ease; flex-shrink:0;}
+  .finding.open .chevron{transform:rotate(90deg);}
+
+  .finding-body{
+    display:none; padding:0 16px 18px; border-top:1px solid var(--hairline);
+  }
+  .finding.open .finding-body{display:block; padding-top:14px;}
+  .snippet{
+    font-family:'JetBrains Mono',monospace; font-size:0.8rem; color:#C9D3E5;
+    background:var(--surface-2); border-radius:6px; padding:10px 12px;
+    overflow-x:auto; margin:0 0 14px;
+  }
+  .field{margin-bottom:12px;}
+  .field:last-child{margin-bottom:0;}
+  .field .k{
+    font-family:'JetBrains Mono',monospace; font-size:0.7rem; letter-spacing:0.05em;
+    text-transform:uppercase; color:var(--text-muted); margin-bottom:4px;
+  }
+  .field .v{font-size:0.88rem; color:var(--text);}
+  .confidence-tag{
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:var(--verified);
+    margin-left:8px;
+  }
+
+  details.dismissed-wrap{margin-top:22px;}
+  details.dismissed-wrap summary{
+    cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:0.82rem;
+    color:var(--text-muted); padding:8px 0; list-style:none;
+  }
+  details.dismissed-wrap summary::-webkit-details-marker{display:none;}
+  details.dismissed-wrap summary:before{content:"▸ "; }
+  details.dismissed-wrap[open] summary:before{content:"▾ "; }
+  .dismissed-item{
+    padding:10px 0; border-top:1px solid var(--hairline);
+    font-size:0.82rem; color:var(--text-muted);
+  }
+  .dismissed-item .why{color:var(--text-muted); font-style:italic; margin-top:4px;}
+
+  .empty{
+    text-align:center; padding:56px 20px; color:var(--text-muted);
+  }
+  .empty p{font-size:0.92rem; margin:6px 0;}
+  .empty .big{font-family:'Space Grotesk',sans-serif; font-size:1.1rem; color:var(--text); font-weight:600;}
+
+  footer{
+    text-align:center; margin-top:48px; font-family:'JetBrains Mono',monospace;
+    font-size:0.72rem; color:var(--text-muted);
+  }
+
+  @media (max-width:520px){
+    .run-row{flex-direction:column;}
+    button.run{width:100%;}
+    .modules{text-align:left;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="mark">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L4 5.5V11C4 16 7.4 20.6 12 22C16.6 20.6 20 16 20 11V5.5L12 2Z" stroke="#1A1200" stroke-width="1.8" stroke-linejoin="round"/>
+          <path d="M9 12L11 14L15.5 9.5" stroke="#1A1200" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <h1>CodeGuardian</h1>
+        <p class="tagline">fewer findings. higher confidence.</p>
+      </div>
+    </div>
+    <div class="modules">module 1–4<br>repo → parse → rules → AI</div>
+  </header>
+
+  <div class="panel">
+    <div class="run-row">
+      <input type="text" id="repoUrl" placeholder="https://github.com/owner/repo" autocomplete="off">
+      <button class="run" id="runBtn">Run scan</button>
+    </div>
+    <div class="modes">
+      <label class="mode-opt active" id="modeAnalyzeLabel">
+        <input type="radio" name="mode" value="analyze" checked> Quick scan — rules only, free
+      </label>
+      <label class="mode-opt" id="modeValidateLabel">
+        <input type="radio" name="mode" value="validate"> Full validate — AI-reviewed, uses your API key
+      </label>
+    </div>
+    <div class="status" id="statusRow">
+      <span class="pulse"></span>
+      <span id="statusText">Cloning repository…</span>
+    </div>
+  </div>
+
+  <div class="error-panel" id="errorPanel">
+    <div class="label">Request failed</div>
+    <pre id="errorText"></pre>
+  </div>
+
+  <div class="results" id="results">
+    <div class="meta-row" id="metaRow"></div>
+    <div class="panel gauge-panel" id="gaugePanel" style="display:none;">
+      <div class="gauge-label">
+        <span><b id="gaugeCandidates">0</b> candidate findings</span>
+        <span><b id="gaugeVerified" style="color:var(--verified);">0</b> verified</span>
+      </div>
+      <div class="gauge-track">
+        <div class="gauge-fill" id="gaugeFill" style="width:0%;"></div>
+      </div>
+      <div class="gauge-caption" id="gaugeCaption"></div>
+    </div>
+
+    <h2 class="section-title">Findings <span class="count-badge" id="findingsCount">0</span></h2>
+    <div id="findingsList"></div>
+
+    <details class="dismissed-wrap" id="dismissedWrap" style="display:none;">
+      <summary id="dismissedSummary">Dismissed by AI (0)</summary>
+      <div id="dismissedList"></div>
+    </details>
+  </div>
+
+  <div class="empty" id="emptyState">
+    <p class="big">Paste a public GitHub repo to scan it.</p>
+    <p>Quick scan runs the rule engine only — free, no API key needed.<br>Full validate adds AI review to cut candidates down to confirmed issues.</p>
+  </div>
+
+  <footer>CodeGuardian AI · module 1 repository processor · module 2 parser · module 3 rule engine · module 4 AI validation</footer>
+</div>
+
+<script>
+const repoInput = document.getElementById('repoUrl');
+const runBtn = document.getElementById('runBtn');
+const statusRow = document.getElementById('statusRow');
+const statusText = document.getElementById('statusText');
+const errorPanel = document.getElementById('errorPanel');
+const errorText = document.getElementById('errorText');
+const results = document.getElementById('results');
+const emptyState = document.getElementById('emptyState');
+const metaRow = document.getElementById('metaRow');
+const gaugePanel = document.getElementById('gaugePanel');
+const findingsList = document.getElementById('findingsList');
+const findingsCount = document.getElementById('findingsCount');
+const dismissedWrap = document.getElementById('dismissedWrap');
+const dismissedList = document.getElementById('dismissedList');
+const dismissedSummary = document.getElementById('dismissedSummary');
+const modeAnalyzeLabel = document.getElementById('modeAnalyzeLabel');
+const modeValidateLabel = document.getElementById('modeValidateLabel');
+
+document.querySelectorAll('input[name=mode]').forEach(r => {
+  r.addEventListener('change', () => {
+    modeAnalyzeLabel.classList.toggle('active', r.value === 'analyze' && r.checked);
+    modeValidateLabel.classList.toggle('active', r.value === 'validate' && r.checked);
+  });
+});
+document.querySelectorAll('input[name=mode]').forEach(r => {
+  if (r.checked) r.dispatchEvent(new Event('change'));
+});
+
+function getMode(){
+  return document.querySelector('input[name=mode]:checked').value;
+}
+
+function sevClass(sev){
+  const s = (sev || '').toLowerCase();
+  if (s === 'high') return 'sev-high';
+  if (s === 'medium') return 'sev-medium';
+  return 'sev-low';
+}
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+function renderCandidateFinding(f){
+  const el = document.createElement('div');
+  el.className = 'finding';
+  el.innerHTML = `
+    <div class="finding-head">
+      <span class="sev ${sevClass(f.severity)}">${escapeHtml(f.severity)}</span>
+      <span class="finding-title">${escapeHtml(f.title)}</span>
+      <span class="finding-loc">${escapeHtml(f.file)}:${f.line}</span>
+      <span class="chevron">▸</span>
+    </div>
+    <div class="finding-body">
+      <pre class="snippet">${escapeHtml(f.snippet)}</pre>
+      <div class="field"><div class="k">Why it's flagged</div><div class="v">${escapeHtml(f.description)}</div></div>
+      ${f.cwe ? `<div class="field"><div class="k">Reference</div><div class="v">${escapeHtml(f.cwe)}</div></div>` : ''}
+    </div>
+  `;
+  el.querySelector('.finding-head').addEventListener('click', () => el.classList.toggle('open'));
+  return el;
+}
+
+function renderValidatedFinding(f){
+  const el = document.createElement('div');
+  el.className = 'finding';
+  el.innerHTML = `
+    <div class="finding-head">
+      <span class="sev ${sevClass(f.severity)}">${escapeHtml(f.severity)}</span>
+      <span class="finding-title">${escapeHtml(f.title)}<span class="confidence-tag">${escapeHtml(f.confidence)} confidence</span></span>
+      <span class="finding-loc">${escapeHtml(f.file)}:${f.line}</span>
+      <span class="chevron">▸</span>
+    </div>
+    <div class="finding-body">
+      <pre class="snippet">${escapeHtml(f.snippet)}</pre>
+      <div class="field"><div class="k">Why it's real</div><div class="v">${escapeHtml(f.explanation)}</div></div>
+      <div class="field"><div class="k">How it's exploited</div><div class="v">${escapeHtml(f.exploit_scenario)}</div></div>
+      <div class="field"><div class="k">Suggested fix</div><div class="v">${escapeHtml(f.patch_suggestion)}</div></div>
+      ${f.things_to_verify && f.things_to_verify.length ? `<div class="field"><div class="k">Verify before closing</div><div class="v">${f.things_to_verify.map(t => '· ' + escapeHtml(t)).join('<br>')}</div></div>` : ''}
+    </div>
+  `;
+  el.querySelector('.finding-head').addEventListener('click', () => el.classList.toggle('open'));
+  return el;
+}
+
+function renderMeta(data){
+  metaRow.innerHTML = '';
+  const chips = [
+    data.repository ? data.repository.replace('https://github.com/', '') : '',
+    data.branch,
+    (data.languages || []).join(', '),
+    `${data.file_count} files`
+  ].filter(Boolean);
+  chips.forEach(c => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = c;
+    metaRow.appendChild(chip);
+  });
+}
+
+async function runScan(){
+  const url = repoInput.value.trim();
+  if (!url){ repoInput.focus(); return; }
+  const mode = getMode();
+
+  errorPanel.classList.remove('showing');
+  results.classList.remove('showing');
+  emptyState.style.display = 'none';
+  runBtn.disabled = true;
+  statusRow.classList.add('showing');
+  statusText.textContent = mode === 'validate'
+    ? 'Cloning, parsing, running rules, then AI review…'
+    : 'Cloning, parsing, running rules…';
+
+  try {
+    const resp = await fetch(`/${mode}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({github_url: url})
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail, null, 2);
+      errorText.textContent = detail || `HTTP ${resp.status}`;
+      errorPanel.classList.add('showing');
+      return;
+    }
+
+    renderMeta(data);
+    findingsList.innerHTML = '';
+    dismissedList.innerHTML = '';
+
+    if (mode === 'validate') {
+      gaugePanel.style.display = 'block';
+      const candidates = data.candidate_finding_count || 0;
+      const verified = data.verified_finding_count || 0;
+      document.getElementById('gaugeCandidates').textContent = candidates;
+      document.getElementById('gaugeVerified').textContent = verified;
+      const pct = candidates > 0 ? Math.round((verified / candidates) * 100) : 0;
+      document.getElementById('gaugeFill').style.width = pct + '%';
+      document.getElementById('gaugeCaption').innerHTML =
+        candidates > 0
+          ? `AI confirmed <b>${verified} of ${candidates}</b> candidates as real, actionable issues.`
+          : `No candidate findings from the rule engine — nothing for the AI to review.`;
+
+      findingsCount.textContent = data.findings.length;
+      if (data.findings.length === 0) {
+        findingsList.innerHTML = '<div class="empty"><p>No verified findings. Either the code is clean, or check "Dismissed" below to see what the rule engine flagged and why the AI ruled it out.</p></div>';
+      } else {
+        data.findings.forEach(f => findingsList.appendChild(renderValidatedFinding(f)));
+      }
+
+      if (data.dismissed && data.dismissed.length) {
+        dismissedWrap.style.display = 'block';
+        dismissedSummary.textContent = `Dismissed by AI (${data.dismissed.length})`;
+        data.dismissed.forEach(f => {
+          const item = document.createElement('div');
+          item.className = 'dismissed-item';
+          item.innerHTML = `<strong>${escapeHtml(f.title)}</strong> — ${escapeHtml(f.file)}:${f.line}<div class="why">${escapeHtml(f.explanation)}</div>`;
+          dismissedList.appendChild(item);
+        });
+      } else {
+        dismissedWrap.style.display = 'none';
+      }
+    } else {
+      gaugePanel.style.display = 'none';
+      dismissedWrap.style.display = 'none';
+      findingsCount.textContent = data.findings.length;
+      if (data.findings.length === 0) {
+        findingsList.innerHTML = '<div class="empty"><p>No candidate findings from the rule engine on this repo.</p></div>';
+      } else {
+        data.findings.forEach(f => findingsList.appendChild(renderCandidateFinding(f)));
+      }
+    }
+
+    results.classList.add('showing');
+  } catch (err) {
+    errorText.textContent = 'Network error: ' + err.message;
+    errorPanel.classList.add('showing');
+  } finally {
+    runBtn.disabled = false;
+    statusRow.classList.remove('showing');
+  }
+}
+
+runBtn.addEventListener('click', runScan);
+repoInput.addEventListener('keydown', e => { if (e.key === 'Enter') runScan(); });
+</script>
+</body>
+</html>
