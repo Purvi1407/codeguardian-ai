@@ -155,3 +155,41 @@ Two modes, exposed as a toggle:
 - **Why no framework (React/Next.js)?** Zero build step, zero deployment complexity — the whole UI is one static file the backend already serves. For a 2-endpoint tool with no client-side state beyond "what did the last scan return," a framework would add process without adding capability. This is a legitimate answer if asked "why not React" — not every UI needs one.
 - **The candidates → verified gauge bar** is the one deliberately designed element: it visualizes the core product philosophy ("fewer, higher-confidence findings") as an actual number you watch shrink, rather than just stating it in copy.
 - **Dismissed findings are visible but collapsed by default** — same reasoning as the API design: transparency without cluttering the primary view.
+
+## Phase 1 — Foundation & Safety: automated test suite
+
+Added `backend/tests/` — a pytest suite covering the Python rule engine (`app/analyzer/python_rules.py`) and parser (`app/parser/python_parser.py`), plus a GitHub Actions workflow that runs it on every push/PR.
+
+**61 tests, 100% statement coverage on `python_rules.py`.**
+
+```
+backend/tests/
+  fixtures/
+    vulnerable_python.py     # one true-positive case per rule (21 functions)
+    safe_python.py           # tricky-but-safe / false-positive regressions (21 functions)
+    malformed/
+      syntax_error.py        # invalid Python
+      empty.py                # zero-byte file
+      only_comments.py       # parses fine, nothing to walk
+      unicode_content.py     # non-ASCII identifiers + emoji near a real finding
+  conftest.py                 # shared fixtures: parses each file once per module
+  test_python_rules.py        # rule-by-rule true/false-positive assertions
+  test_python_parser.py       # function/class extraction, line numbers, args
+  test_edge_cases.py          # syntax errors, empty files, unicode, missing files
+```
+
+**Run it**:
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest tests/ -v --cov=app.analyzer --cov=app.parser --cov-report=term-missing
+```
+
+### Design notes (for defending decisions)
+
+- **Why assert on function name instead of line number?** Line-number assertions break every time a fixture file gets a comment added or a case reordered — that's noise, not signal. Every fixture function is named `<rule_id>__<variant>`, so `test_python_rules.py` asserts "this function fires this rule" independent of where it sits in the file. Only an actual behavior change in the rule breaks the test.
+- **Why two meta-tests (`TestCoverageIsComplete`)?** To catch drift in both directions: a rule added to `analyzer/rules.py` with no fixture (silent gap), or a fixture function added with no assertion (silent no-op test). Both failed loudly when I deliberately introduced them while building this — see the "sanity check" note below.
+- **Why is the false-positive fixture the same size as the true-positive one?** Because a rule engine that never checks its own precision is only half-tested. `safe_python.py` includes the exact category of case the AI validation layer is designed to catch by hand (e.g. `SandboxedEvaluator.eval()` — a method call, not the builtin — mirroring the real `mathjs.eval()` case from manual DVNA/Flask testing) and an HMAC-signing case mirroring the real Flask false-positive this tool already correctly avoided in manual testing. Encoding those as fixtures means they're now protected by CI, not just by memory of a one-off manual check.
+- **Verified the suite actually catches regressions, not just passes trivially**: temporarily disabled the SQL injection rule's trigger condition and confirmed all 4 related tests failed with a clear assertion message, then restored it and confirmed all 61 pass again. This is the difference between "tests exist" and "tests would catch a real bug" — worth checking once, not worth leaving as permanent scaffolding.
+- **Why is JS/TS excluded from this suite?** `analyzer/js_ts_rules.py` is still regex-based (documented limitation above) — writing a rigorous test suite against detection logic that's slated for a tree-sitter rewrite would mean rewriting the tests immediately after. Sequencing: Phase 2 (tree-sitter) lands first, then JS/TS gets the same fixture + test treatment Python has here.
+- **Why does CI only install `requirements-dev.txt`, not hit the OpenAI API?** The test suite intentionally scopes to `app.analyzer` and `app.parser` — no network calls, no API key needed in CI. This keeps the pipeline fast, free, and not dependent on secrets being configured correctly in the repo settings. AI validation (`app/ai/`) getting its own mocked test suite is next.

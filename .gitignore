@@ -6,3 +6,4 @@ backend/.venv/
 temp/
 uploads/
 .DS_Store
+backend/.coverage
