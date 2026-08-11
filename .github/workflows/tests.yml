@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  python-rule-engine-tests:
-    name: Python rule engine tests
+  rule-engine-tests:
+    name: Rule engine tests (Python + JS/TS)
     runs-on: ubuntu-latest
 
     steps:
