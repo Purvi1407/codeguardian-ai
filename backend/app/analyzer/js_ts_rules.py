@@ -19,16 +19,22 @@ source lines, which means:
 
 Deliberately still pattern-based, not full taint tracking: a rule firing
 means "this looks worth a human/AI second look", same philosophy as the
-Python analyzer. Cross-function tracking (a tainted value passed as an
-argument into another function) is out of scope here too, for the same
-reason it's out of scope on the Python side — see python_rules.py.
+Python analyzer.
+
+Phase 3 adds bounded, one-hop cross-function parameter tracking plus
+alias propagation — mirroring the same additions to python_rules.py.
+See that module's docstring and the README "Phase 3" section for the
+full design writeup; the JS/TS version below follows the identical
+two-pass approach, just walking a tree-sitter tree instead of an ast
+tree.
 """
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 
 from app.analyzer.rules import RULES
 from app.parser.ts_grammars import parse_source
+from app.parser.js_ts_parser import extract_top_level_function_params
 from app.schemas.findings import Finding
 
 SECRET_NAME_PATTERN = re.compile(
@@ -47,9 +53,15 @@ EXEC_METHOD_NAMES = {"exec", "execSync", "execFile", "execFileSync"}
 EXEC_CHILD_PROCESS_OBJECTS = {"child_process", "cp"}
 HEADER_SETTER_NAMES = {"setHeader", "header", "set"}
 
+CROSS_FUNCTION_NOTE = (
+    " Reaches this sink through a parameter — a caller elsewhere in this "
+    "file passes a dynamically-built value into it, rather than this "
+    "function building the dangerous value itself."
+)
+
 
 class JsTsSecurityVisitor:
-    def __init__(self, file_path: str, source: str):
+    def __init__(self, file_path: str, source: str, seed_params: Optional[Dict[str, Set[str]]] = None):
         self.file_path = file_path
         self.source_lines = source.splitlines()
         self.findings: List[Finding] = []
@@ -60,6 +72,20 @@ class JsTsSecurityVisitor:
         # every function/method/arrow function.
         self._dynamic_str_vars: dict = {}
         self._var_scope_stack: List[dict] = []
+        # func_name -> set of its parameter names seeded from cross-
+        # function analysis (see analyze_js_ts_file). Applied whenever
+        # we enter a scope whose inferred name matches.
+        self._seed_params: Dict[str, Set[str]] = seed_params or {}
+        # Parallel stack to _func_stack: which currently-tainted names in
+        # the current scope came from a seeded parameter rather than a
+        # local dynamic-string build — used only to word findings
+        # accurately, not to change whether they fire.
+        self._cross_taint_stack: List[Set[str]] = []
+        # Side output: local (bare-identifier-callable) function name ->
+        # set of positional argument indices seen with a dynamically-
+        # built value at some call site in this file. Consumed by
+        # analyze_js_ts_file for the second pass.
+        self.call_taint: Dict[str, Set[int]] = {}
 
     # -- generic helpers ----------------------------------------------------
 
@@ -77,8 +103,11 @@ class JsTsSecurityVisitor:
         end = min(len(self.source_lines), lineno + 5)
         return "\n".join(self.source_lines[start - 1:end])[:600]
 
-    def _add(self, rule_id: str, lineno: int):
+    def _add(self, rule_id: str, lineno: int, via_param: bool = False):
         meta = RULES[rule_id]
+        description = meta["description"]
+        if via_param:
+            description = description + CROSS_FUNCTION_NOTE
         self.findings.append(Finding(
             rule_id=rule_id,
             title=meta["title"],
@@ -88,7 +117,7 @@ class JsTsSecurityVisitor:
             function=self._current_function(),
             line=lineno,
             snippet=self._snippet(lineno),
-            description=meta["description"],
+            description=description,
         ))
 
     # -- node-shape helpers ---------------------------------------------
@@ -170,6 +199,33 @@ class JsTsSecurityVisitor:
             and self._text(node) in self._dynamic_str_vars
         )
 
+    def _is_via_seeded_param(self, node) -> bool:
+        """True if `node` is an identifier reference to a name that's
+        tainted in the current scope specifically because it was seeded
+        from cross-function analysis, not built locally. Used only to
+        word the finding's description accurately."""
+        return (
+            node is not None
+            and node.type == "identifier"
+            and bool(self._cross_taint_stack)
+            and self._text(node) in self._cross_taint_stack[-1]
+        )
+
+    def _record_call_taint(self, node):
+        """If this call's target is a bare identifier (i.e. could be a
+        locally-defined top-level function or const-arrow in this file),
+        record which positional argument indices received a
+        dynamically-built value at this call site. Harmless no-op for
+        calls to functions that aren't actually local — analyze_js_ts_file
+        only looks up entries for names it already knows are local."""
+        func = node.child_by_field_name("function")
+        if func is None or func.type != "identifier":
+            return
+        callee = self._text(func)
+        for i, arg in enumerate(self._first_two_args(node)):
+            if self._is_dynamic_string(arg) or self._is_tainted_identifier(arg):
+                self.call_taint.setdefault(callee, set()).add(i)
+
     def _first_two_args(self, call_node):
         args_node = call_node.child_by_field_name("arguments")
         if args_node is None:
@@ -223,11 +279,15 @@ class JsTsSecurityVisitor:
         node_type = node.type
 
         if node_type in FUNCTION_SCOPE_TYPES:
-            self._func_stack.append(self._function_name(node))
+            func_name = self._function_name(node)
+            self._func_stack.append(func_name)
             self._var_scope_stack.append(self._dynamic_str_vars)
-            self._dynamic_str_vars = {}
+            seeded = self._seed_params.get(func_name, set())
+            self._dynamic_str_vars = {name: True for name in seeded}
+            self._cross_taint_stack.append(set(seeded))
             for child in node.children:
                 self.visit(child)
+            self._cross_taint_stack.pop()
             self._dynamic_str_vars = self._var_scope_stack.pop()
             self._func_stack.pop()
             return
@@ -259,12 +319,27 @@ class JsTsSecurityVisitor:
         if literal is not None and len(literal) > 3 and SECRET_NAME_PATTERN.search(var_name):
             self._add("hardcoded-secret", self._line_of(node))
 
-        if value_node is not None and self._is_dynamic_string(value_node):
+        # Alias propagation: `const q2 = q1` where q1 is already tracked
+        # (built locally, or seeded from a caller) taints q2 too — not
+        # just direct dynamic-string-building assignments.
+        is_dynamic = value_node is not None and self._is_dynamic_string(value_node)
+        is_alias = self._is_tainted_identifier(value_node)
+        if is_dynamic or is_alias:
             self._dynamic_str_vars[var_name] = True
+            if is_alias and self._cross_taint_stack and self._text(value_node) in self._cross_taint_stack[-1]:
+                self._cross_taint_stack[-1].add(var_name)
         else:
             # Reassigning/declaring with something non-dynamic clears any
             # prior taint on this name — same reasoning as python_rules.py.
+            # This is also, deliberately, how passing a tainted value
+            # through a sanitizer ends up excluded already: `const safe =
+            # sanitize(tainted)` assigns from a call_expression, which
+            # isn't a recognized dynamic-string builder, so it lands here
+            # and clears any prior taint on `safe` — no separate
+            # sanitizer allowlist needed for that case.
             self._dynamic_str_vars.pop(var_name, None)
+            if self._cross_taint_stack:
+                self._cross_taint_stack[-1].discard(var_name)
 
     def _check_assignment_expression(self, node):
         left = node.child_by_field_name("left")
@@ -278,10 +353,16 @@ class JsTsSecurityVisitor:
 
         if left.type == "identifier":
             var_name = self._text(left)
-            if self._is_dynamic_string(right):
+            is_dynamic = self._is_dynamic_string(right)
+            is_alias = self._is_tainted_identifier(right)
+            if is_dynamic or is_alias:
                 self._dynamic_str_vars[var_name] = True
+                if is_alias and self._cross_taint_stack and self._text(right) in self._cross_taint_stack[-1]:
+                    self._cross_taint_stack[-1].add(var_name)
             else:
                 self._dynamic_str_vars.pop(var_name, None)
+                if self._cross_taint_stack:
+                    self._cross_taint_stack[-1].discard(var_name)
 
     def _check_call_expression(self, node):
         func = node.child_by_field_name("function")
@@ -290,17 +371,19 @@ class JsTsSecurityVisitor:
         arg_nodes = self._first_two_args(node)
         first_arg = arg_nodes[0] if arg_nodes else None
 
+        self._record_call_taint(node)
+
         if func.type == "member_expression":
             prop = self._member_property(func)
             root = self._member_root_identifier(func)
 
             if prop in SQL_METHOD_NAMES and first_arg is not None:
                 if self._is_dynamic_string(first_arg) or self._is_tainted_identifier(first_arg):
-                    self._add("sql-injection-string-build", self._line_of(node))
+                    self._add("sql-injection-string-build", self._line_of(node), via_param=self._is_via_seeded_param(first_arg))
 
             if prop in EXEC_METHOD_NAMES and root in EXEC_CHILD_PROCESS_OBJECTS and first_arg is not None:
                 if self._is_dynamic_string(first_arg) or self._is_tainted_identifier(first_arg):
-                    self._add("command-injection-js-exec", self._line_of(node))
+                    self._add("command-injection-js-exec", self._line_of(node), via_param=self._is_via_seeded_param(first_arg))
 
             if prop == "createHash" and first_arg is not None:
                 lit = self._string_literal_value(first_arg)
@@ -329,7 +412,7 @@ class JsTsSecurityVisitor:
             # call — so no negative-lookbehind hack is needed here.
             if fname in EXEC_METHOD_NAMES and first_arg is not None:
                 if self._is_dynamic_string(first_arg) or self._is_tainted_identifier(first_arg):
-                    self._add("command-injection-js-exec", self._line_of(node))
+                    self._add("command-injection-js-exec", self._line_of(node), via_param=self._is_via_seeded_param(first_arg))
 
             if fname == "eval" and first_arg is not None:
                 if self._string_literal_value(first_arg) is None:
@@ -363,6 +446,23 @@ class JsTsSecurityVisitor:
             self._add("insecure-cors-wildcard", self._line_of(node))
 
 
+def _dedupe_findings(findings: List[Finding]) -> List[Finding]:
+    """Two passes over the same file (see analyze_js_ts_file) can each
+    independently emit the same finding for anything that doesn't depend
+    on cross-function seeding — dedupe by the combination that identifies
+    "the same thing was flagged", keeping the first (pass 1, unseeded)
+    occurrence, which has the plainer, unannotated description."""
+    seen = set()
+    deduped = []
+    for f in findings:
+        key = (f.rule_id, f.file, f.line)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(f)
+    return deduped
+
+
 def analyze_js_ts_file(file_path: Path, relative_path: str) -> List[Finding]:
     """Parse and run all rules against a single JS/TS/TSX file. Returns
     [] on parse failure (the parser step already reports parse_error
@@ -381,6 +481,36 @@ def analyze_js_ts_file(file_path: Path, relative_path: str) -> List[Finding]:
     if tree.root_node.has_error:
         return []
 
-    visitor = JsTsSecurityVisitor(relative_path, source)
-    visitor.visit(tree.root_node)
-    return visitor.findings
+    # Pass 1: normal single-function-scope analysis, exactly as in
+    # Phase 2. Also collects call_taint as a side effect — which local
+    # (bare-identifier-callable) functions were called with a
+    # dynamically-built argument, and at which position.
+    pass1 = JsTsSecurityVisitor(relative_path, source)
+    pass1.visit(tree.root_node)
+
+    if not pass1.call_taint:
+        return pass1.findings
+
+    # Bounded cross-function step: for every local function called with
+    # a dynamic argument somewhere in this file, seed its matching
+    # parameter name(s) as pre-tainted, then re-run the full analysis
+    # once more. Intentionally one hop, not a fixpoint over a call
+    # graph — see python_rules.py's analyze_python_file for the same
+    # design and why a full fixpoint is out of scope here.
+    local_params = extract_top_level_function_params(tree.root_node)
+    seed_params: Dict[str, Set[str]] = {}
+    for func_name, arg_indices in pass1.call_taint.items():
+        params = local_params.get(func_name)
+        if not params:
+            continue
+        names = {params[i] for i in arg_indices if i < len(params)}
+        if names:
+            seed_params[func_name] = names
+
+    if not seed_params:
+        return pass1.findings
+
+    pass2 = JsTsSecurityVisitor(relative_path, source, seed_params=seed_params)
+    pass2.visit(tree.root_node)
+
+    return _dedupe_findings(pass1.findings + pass2.findings)

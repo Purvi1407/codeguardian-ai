@@ -130,6 +130,39 @@ def _methods_from_class_body(body_node, class_name: str) -> Tuple[List[FunctionI
     return methods, method_names
 
 
+def extract_top_level_function_params(root_node) -> dict:
+    """Top-level function/const-arrow name -> its ordered parameter
+    names, as plain strings. Used by analyzer/js_ts_rules.py for bounded
+    cross-function taint seeding — kept here rather than duplicated in
+    the analyzer, since it's the same top-level-declaration walk
+    parse_js_ts_file already does, just returning names+params instead
+    of full FunctionInfo objects. Takes a tree-sitter root node directly
+    (not a file path) since the analyzer already has a parsed tree from
+    its own read of the file and doesn't need to re-read/re-parse it."""
+    result = {}
+    for raw_node in root_node.children:
+        node = _unwrap_export(raw_node)
+
+        if node.type in FUNCTION_NODE_TYPES:
+            name_node = node.child_by_field_name("name")
+            if name_node is not None:
+                params_node = node.child_by_field_name("parameters")
+                result[name_node.text.decode("utf-8", errors="replace")] = _extract_params(params_node)
+
+        elif node.type in ("lexical_declaration", "variable_declaration"):
+            for declarator in node.children:
+                if declarator.type != "variable_declarator":
+                    continue
+                name_node = declarator.child_by_field_name("name")
+                value_node = declarator.child_by_field_name("value")
+                if name_node is None or value_node is None or value_node.type not in FUNCTION_VALUE_TYPES:
+                    continue
+                params_node = value_node.child_by_field_name("parameters")
+                result[name_node.text.decode("utf-8", errors="replace")] = _extract_params(params_node)
+
+    return result
+
+
 def parse_js_ts_file(file_path: Path) -> Tuple[List[FunctionInfo], List[ClassInfo], int, str]:
     try:
         source_text = file_path.read_text(encoding="utf-8", errors="replace")
