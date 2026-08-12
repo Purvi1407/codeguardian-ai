@@ -1,3 +1,13 @@
+# Bumped whenever SYSTEM_PROMPT, build_user_prompt, or
+# response_json_schema changes in a way that could change the model's
+# judgment — e.g. tightening the "be skeptical by default" instruction,
+# adding a new required field. Consumed by ai/cache.py so a prompt
+# change correctly invalidates previously-cached verdicts instead of
+# serving a judgment reached under different instructions. Bump this
+# any time you edit the prompt text below, even a small wording change —
+# it's cheap to bump and expensive to silently serve a stale verdict.
+PROMPT_VERSION = "v1"
+
 SYSTEM_PROMPT = """You are a senior application security engineer reviewing \
 candidate findings produced by a static analysis rule engine.
 
