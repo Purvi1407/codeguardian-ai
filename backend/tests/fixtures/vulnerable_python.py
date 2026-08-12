@@ -14,6 +14,7 @@ import hashlib
 import yaml
 import requests
 import sqlite3
+import random
 
 
 # ---- sql-injection-string-build ----
@@ -125,3 +126,40 @@ def tls_verification_disabled__get(url):
 
 def tls_verification_disabled__post(url, payload):
     return requests.post(url, json=payload, verify=False)
+
+
+# ---- path-traversal-open ----
+
+def path_traversal_open__fstring(filename):
+    return open(f"/uploads/{filename}")
+
+
+def path_traversal_open__via_variable(filename):
+    path = f"/uploads/{filename}"
+    return open(path)
+
+
+# ---- insecure-random-token ----
+
+def insecure_random_token__qualified(length):
+    token = random.randint(100000, 999999)
+    return token
+
+
+def insecure_random_token__bare_import(length):
+    from random import choice
+    import string
+    password = choice(string.ascii_letters)
+    return password
+
+
+# ---- flask-cookie-missing-secure-flag ----
+
+def flask_cookie_missing_secure_flag__no_flags(response, session_id):
+    response.set_cookie("session_id", session_id)
+    return response
+
+
+def flask_cookie_missing_secure_flag__only_httponly(response, session_id):
+    response.set_cookie("session_id", session_id, httponly=True)
+    return response

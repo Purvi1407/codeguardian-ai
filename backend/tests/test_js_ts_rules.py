@@ -10,19 +10,25 @@ import pytest
 
 from app.analyzer.rules import RULES
 
-# JS-only rules (no Python fixture exists or is expected for these —
-# see test_python_rules.py's own exclusion list, which is the mirror
-# image of this one).
-JS_TS_RULE_IDS = {
-    "sql-injection-string-build",
-    "command-injection-js-exec",
-    "dangerous-eval-exec",
-    "xss-innerhtml-assignment",
-    "weak-crypto-hash",
-    "insecure-cors-wildcard",
-    "jwt-none-algorithm",
-    "hardcoded-secret",
+# Python-only rules — everything else in RULES is fair game for a JS/TS
+# fixture. Deriving from RULES.keys() (rather than a hand-maintained
+# positive list, which is what this used to be) means a new rule added
+# to rules.py is caught by TestJsTsCoverageIsComplete below automatically,
+# the same way test_python_rules.py's equivalent check already worked —
+# this was a real gap: the old hardcoded JS_TS_RULE_IDS set silently
+# stayed valid even when new rules were added to rules.py without a
+# fixture, because it never referenced RULES at all.
+PYTHON_ONLY_RULE_IDS = {
+    "command-injection-shell-true",
+    "command-injection-os-system",
+    "insecure-deserialization-pickle",
+    "insecure-deserialization-yaml",
+    "debug-mode-enabled",
+    "tls-verification-disabled",
+    "path-traversal-open",
+    "flask-cookie-missing-secure-flag",
 }
+JS_TS_RULE_IDS = set(RULES.keys()) - PYTHON_ONLY_RULE_IDS
 
 EXPECTED_TRIGGERS = {
     "sql_injection_string_build__template": "sql-injection-string-build",
@@ -45,6 +51,12 @@ EXPECTED_TRIGGERS = {
     "sql_injection_string_build__class_method": "sql-injection-string-build",
     "sql_injection_string_build__chained_member": "sql-injection-string-build",
     "jwt_none_algorithm__singular_key": "jwt-none-algorithm",
+    "path_traversal_fs__readfile_template": "path-traversal-fs",
+    "path_traversal_fs__via_variable": "path-traversal-fs",
+    "insecure_random_token__direct": "insecure-random-token",
+    "insecure_random_token__password": "insecure-random-token",
+    "cookie_missing_secure_flag__no_options": "cookie-missing-secure-flag",
+    "cookie_missing_secure_flag__only_httponly": "cookie-missing-secure-flag",
 }
 
 SAFE_FUNCTIONS = [
@@ -66,6 +78,10 @@ SAFE_FUNCTIONS = [
     "safe_taint_cleared_on_reassignment",
     "safe_destructured_declaration",
     "known_gap_require_child_process_exec_not_detected",
+    "safe_readfile_literal_path",
+    "safe_random_token_uses_crypto_module",
+    "safe_math_random_non_secret_variable",
+    "safe_cookie_with_both_flags",
 ]
 
 

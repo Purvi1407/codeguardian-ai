@@ -116,3 +116,36 @@ function jwt_none_algorithm__singular_key(token, secret) {
   jwt.verify(token, secret, { algorithm: 'none' });
 }
 
+// ---- path-traversal-fs ----
+
+function path_traversal_fs__readfile_template(filename) {
+  fs.readFile(`/uploads/${filename}`, (err, data) => {});
+}
+
+function path_traversal_fs__via_variable(filename) {
+  const p = `/uploads/${filename}`;
+  fs.readFileSync(p);
+}
+
+// ---- insecure-random-token ----
+
+function insecure_random_token__direct() {
+  const token = Math.random().toString(36).substring(2);
+  return token;
+}
+
+function insecure_random_token__password() {
+  const password = Math.random();
+  return password;
+}
+
+// ---- cookie-missing-secure-flag ----
+
+function cookie_missing_secure_flag__no_options(res, sessionId) {
+  res.cookie("session_id", sessionId);
+}
+
+function cookie_missing_secure_flag__only_httponly(res, sessionId) {
+  res.cookie("session_id", sessionId, { httpOnly: true });
+}
+

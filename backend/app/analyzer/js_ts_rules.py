@@ -28,6 +28,7 @@ full design writeup; the JS/TS version below follows the identical
 two-pass approach, just walking a tree-sitter tree instead of an ast
 tree.
 """
+import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -52,6 +53,7 @@ SQL_METHOD_NAMES = {"query", "execute", "raw"}
 EXEC_METHOD_NAMES = {"exec", "execSync", "execFile", "execFileSync"}
 EXEC_CHILD_PROCESS_OBJECTS = {"child_process", "cp"}
 HEADER_SETTER_NAMES = {"setHeader", "header", "set"}
+FS_PATH_FUNCS = {"readFile", "readFileSync", "writeFile", "writeFileSync", "unlink", "unlinkSync"}
 
 CROSS_FUNCTION_NOTE = (
     " Reaches this sink through a parameter — a caller elsewhere in this "
@@ -60,12 +62,23 @@ CROSS_FUNCTION_NOTE = (
 )
 
 
+def _disabled_rule_ids() -> Set[str]:
+    """Same rule-configuration mechanism as python_rules.py — see that
+    module's _disabled_rule_ids for the full rationale. Kept as a
+    near-identical duplicate (rather than a shared import) since the two
+    analyzers are already independent siblings with no shared runtime
+    dependency between them, and this is a two-line function."""
+    raw = os.getenv("CODEGUARDIAN_DISABLED_RULES", "")
+    return {r.strip() for r in raw.split(",") if r.strip()}
+
+
 class JsTsSecurityVisitor:
-    def __init__(self, file_path: str, source: str, seed_params: Optional[Dict[str, Set[str]]] = None):
+    def __init__(self, file_path: str, source: str, seed_params: Optional[Dict[str, Set[str]]] = None, disabled_rules: Optional[Set[str]] = None):
         self.file_path = file_path
         self.source_lines = source.splitlines()
         self.findings: List[Finding] = []
         self._func_stack: List[str] = []
+        self._disabled_rules: Set[str] = disabled_rules or set()
         # Same intent as python_rules.py's _dynamic_str_vars: tracks
         # {var_name: True} for variables assigned a dynamically-built
         # string within the CURRENT function scope, reset on entry to
@@ -104,6 +117,8 @@ class JsTsSecurityVisitor:
         return "\n".join(self.source_lines[start - 1:end])[:600]
 
     def _add(self, rule_id: str, lineno: int, via_param: bool = False):
+        if rule_id in self._disabled_rules:
+            return
         meta = RULES[rule_id]
         description = meta["description"]
         if via_param:
@@ -113,11 +128,13 @@ class JsTsSecurityVisitor:
             title=meta["title"],
             severity=meta["severity"],
             cwe=meta["cwe"],
+            owasp=meta.get("owasp"),
             file=self.file_path,
             function=self._current_function(),
             line=lineno,
             snippet=self._snippet(lineno),
             description=description,
+            remediation=meta.get("remediation"),
         ))
 
     # -- node-shape helpers ---------------------------------------------
@@ -198,6 +215,25 @@ class JsTsSecurityVisitor:
             and node.type == "identifier"
             and self._text(node) in self._dynamic_str_vars
         )
+
+    def _is_math_random_call(self, node) -> bool:
+        """True if `node` is (or contains, anywhere in the expression —
+        e.g. Math.random().toString(36).substring(2), a very common
+        real-world token-generation idiom) a call to Math.random()."""
+        if node is None:
+            return False
+        if node.type == "call_expression":
+            func = node.child_by_field_name("function")
+            if func is not None and func.type == "member_expression":
+                if self._member_property(func) == "random" and self._member_root_identifier(func) == "Math":
+                    return True
+                obj = func.child_by_field_name("object")
+                if self._is_math_random_call(obj):
+                    return True
+        elif node.type == "member_expression":
+            obj = node.child_by_field_name("object")
+            return self._is_math_random_call(obj)
+        return False
 
     def _is_via_seeded_param(self, node) -> bool:
         """True if `node` is an identifier reference to a name that's
@@ -319,6 +355,9 @@ class JsTsSecurityVisitor:
         if literal is not None and len(literal) > 3 and SECRET_NAME_PATTERN.search(var_name):
             self._add("hardcoded-secret", self._line_of(node))
 
+        if self._is_math_random_call(value_node) and SECRET_NAME_PATTERN.search(var_name):
+            self._add("insecure-random-token", self._line_of(node))
+
         # Alias propagation: `const q2 = q1` where q1 is already tracked
         # (built locally, or seeded from a caller) taints q2 too — not
         # just direct dynamic-string-building assignments.
@@ -402,6 +441,19 @@ class JsTsSecurityVisitor:
                     if arg.type == "object":
                         self._check_jwt_options_object(arg, node)
 
+            if prop in FS_PATH_FUNCS and first_arg is not None:
+                if self._is_dynamic_string(first_arg) or self._is_tainted_identifier(first_arg):
+                    self._add("path-traversal-fs", self._line_of(node), via_param=self._is_via_seeded_param(first_arg))
+
+            if prop == "cookie" and len(arg_nodes) >= 3:
+                options = arg_nodes[2]
+                if options.type == "object" and not self._cookie_options_are_secure(options):
+                    self._add("cookie-missing-secure-flag", self._line_of(node))
+                elif options.type != "object":
+                    self._add("cookie-missing-secure-flag", self._line_of(node))
+            elif prop == "cookie" and len(arg_nodes) < 3:
+                self._add("cookie-missing-secure-flag", self._line_of(node))
+
         elif func.type == "identifier":
             fname = self._text(func)
 
@@ -427,6 +479,28 @@ class JsTsSecurityVisitor:
             key_text = self._text(key).strip("'\"").lower() if key is not None else ""
             if key_text in ("algorithm", "algorithms") and self._contains_none_string(value):
                 self._add("jwt-none-algorithm", self._line_of(call_node))
+
+    def _cookie_options_are_secure(self, options_node) -> bool:
+        """True only if BOTH `secure: true` and `httpOnly: true` are
+        present as literal boolean `true` in the options object — any
+        other value (missing, false, or a non-literal expression we
+        can't confirm is true) is treated as not-secure-enough for this
+        rule, matching the same "flag when we can't prove it's safe"
+        conservatism the rest of this analyzer uses."""
+        found_secure = False
+        found_http_only = False
+        for member in options_node.children:
+            if member.type != "pair":
+                continue
+            key = member.child_by_field_name("key")
+            value = member.child_by_field_name("value")
+            key_text = self._text(key).strip("'\"") if key is not None else ""
+            is_true_literal = value is not None and value.type == "true"
+            if key_text == "secure" and is_true_literal:
+                found_secure = True
+            if key_text == "httpOnly" and is_true_literal:
+                found_http_only = True
+        return found_secure and found_http_only
 
     def _check_new_expression(self, node):
         ctor = node.child_by_field_name("constructor")
@@ -481,11 +555,13 @@ def analyze_js_ts_file(file_path: Path, relative_path: str) -> List[Finding]:
     if tree.root_node.has_error:
         return []
 
+    disabled = _disabled_rule_ids()
+
     # Pass 1: normal single-function-scope analysis, exactly as in
     # Phase 2. Also collects call_taint as a side effect — which local
     # (bare-identifier-callable) functions were called with a
     # dynamically-built argument, and at which position.
-    pass1 = JsTsSecurityVisitor(relative_path, source)
+    pass1 = JsTsSecurityVisitor(relative_path, source, disabled_rules=disabled)
     pass1.visit(tree.root_node)
 
     if not pass1.call_taint:
@@ -510,7 +586,7 @@ def analyze_js_ts_file(file_path: Path, relative_path: str) -> List[Finding]:
     if not seed_params:
         return pass1.findings
 
-    pass2 = JsTsSecurityVisitor(relative_path, source, seed_params=seed_params)
+    pass2 = JsTsSecurityVisitor(relative_path, source, seed_params=seed_params, disabled_rules=disabled)
     pass2.visit(tree.root_node)
 
     return _dedupe_findings(pass1.findings + pass2.findings)

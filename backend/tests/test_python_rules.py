@@ -41,6 +41,12 @@ EXPECTED_TRIGGERS = {
     "debug_mode_enabled__flask_app": "debug-mode-enabled",
     "tls_verification_disabled__get": "tls-verification-disabled",
     "tls_verification_disabled__post": "tls-verification-disabled",
+    "path_traversal_open__fstring": "path-traversal-open",
+    "path_traversal_open__via_variable": "path-traversal-open",
+    "insecure_random_token__qualified": "insecure-random-token",
+    "insecure_random_token__bare_import": "insecure-random-token",
+    "flask_cookie_missing_secure_flag__no_flags": "flask-cookie-missing-secure-flag",
+    "flask_cookie_missing_secure_flag__only_httponly": "flask-cookie-missing-secure-flag",
 }
 
 # Every function in safe_python.py — all must produce zero findings.
@@ -66,6 +72,10 @@ SAFE_FUNCTIONS = [
     "safe_tls_verify_true",
     "safe_tls_verify_omitted",
     "safe_call_target_not_name_or_attribute",
+    "safe_open_literal_path",
+    "safe_random_token_uses_secrets_module",
+    "safe_random_non_secret_variable",
+    "safe_cookie_with_both_flags",
 ]
 
 
@@ -123,6 +133,8 @@ class TestCoverageIsComplete:
             "xss-innerhtml-assignment",
             "insecure-cors-wildcard",
             "jwt-none-algorithm",
+            "path-traversal-fs",
+            "cookie-missing-secure-flag",
         }
         python_rules = set(RULES.keys()) - js_only_rules
         covered_rules = set(EXPECTED_TRIGGERS.values())

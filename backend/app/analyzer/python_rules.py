@@ -1,4 +1,5 @@
 import ast
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -13,6 +14,23 @@ SECRET_NAME_PATTERN = __import__("re").compile(
 
 SUBPROCESS_FUNCS = {"run", "Popen", "call", "check_call", "check_output"}
 HTTP_VERBS = {"get", "post", "put", "delete", "patch", "head", "request"}
+RANDOM_FUNCS = {"random", "randint", "randrange", "choice", "choices", "uniform", "getrandbits"}
+
+
+def _disabled_rule_ids() -> Set[str]:
+    """Rule configuration (Phase 4, item 33): rules can be turned off
+    per-deployment via a comma-separated CODEGUARDIAN_DISABLED_RULES
+    environment variable, e.g. CODEGUARDIAN_DISABLED_RULES=weak-crypto-hash,hardcoded-secret.
+    No config file format was introduced for this — an env var is
+    already how this project configures everything else (see
+    core/config.py: MAX_REPO_SIZE_MB, CLONE_TIMEOUT_SECONDS, the OpenAI
+    settings), so this stays consistent rather than adding a second,
+    different configuration mechanism for one feature. Read fresh each
+    call rather than cached at import time, since tests and different
+    scans within the same process may want different settings."""
+    raw = os.getenv("CODEGUARDIAN_DISABLED_RULES", "")
+    return {r.strip() for r in raw.split(",") if r.strip()}
+
 
 CROSS_FUNCTION_NOTE = (
     " Reaches this sink through a parameter — a caller elsewhere in this "
@@ -53,11 +71,12 @@ class SecurityRuleVisitor(ast.NodeVisitor):
         beyond one pass, top-level functions only).
     """
 
-    def __init__(self, file_path: str, source_lines: List[str], seed_params: Optional[Dict[str, Set[str]]] = None):
+    def __init__(self, file_path: str, source_lines: List[str], seed_params: Optional[Dict[str, Set[str]]] = None, disabled_rules: Optional[Set[str]] = None):
         self.file_path = file_path
         self.source_lines = source_lines
         self.findings: List[Finding] = []
         self._func_stack: List[str] = []
+        self._disabled_rules: Set[str] = disabled_rules or set()
         # Tracks {var_name: lineno} for variables assigned a dynamically-built
         # string within the CURRENT function, so `q = f"..."; execute(q)`
         # is caught, not just `execute(f"...")` directly. Reset per function
@@ -106,6 +125,8 @@ class SecurityRuleVisitor(ast.NodeVisitor):
         return "\n".join(window)[:600]
 
     def _add(self, rule_id: str, lineno: int, via_param: bool = False):
+        if rule_id in self._disabled_rules:
+            return
         meta = RULES[rule_id]
         description = meta["description"]
         if via_param:
@@ -115,11 +136,13 @@ class SecurityRuleVisitor(ast.NodeVisitor):
             title=meta["title"],
             severity=meta["severity"],
             cwe=meta["cwe"],
+            owasp=meta.get("owasp"),
             file=self.file_path,
             function=self._current_function(),
             line=lineno,
             snippet=self._snippet(lineno),
             description=description,
+            remediation=meta.get("remediation"),
         ))
 
     def _call_name(self, node: ast.Call) -> Optional[str]:
@@ -197,6 +220,26 @@ class SecurityRuleVisitor(ast.NodeVisitor):
                 if isinstance(target, ast.Name) and SECRET_NAME_PATTERN.search(target.id):
                     if len(node.value.value) > 3:  # skip trivial placeholders like ""
                         self._add("hardcoded-secret", node.lineno)
+                        break
+
+        # A token/secret/password-named variable assigned from the
+        # stdlib `random` module (not `secrets`) — weak randomness for a
+        # security-sensitive value. Covers both `random.randint(...)` and
+        # a bare `randint(...)` after `from random import randint` (the
+        # latter is a heuristic — it can't distinguish that from a
+        # same-named function of your own, but random.choice/randint/
+        # etc are distinctive enough names that this is a reasonable
+        # tradeoff, consistent with this analyzer's whole
+        # candidate-generator philosophy).
+        if isinstance(node.value, ast.Call):
+            call_root = self._call_root(node.value)
+            call_name = self._call_name(node.value)
+            is_qualified_random_call = call_root == "random" and call_name in RANDOM_FUNCS
+            is_bare_random_call = isinstance(node.value.func, ast.Name) and node.value.func.id in RANDOM_FUNCS
+            if is_qualified_random_call or is_bare_random_call:
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and SECRET_NAME_PATTERN.search(target.id):
+                        self._add("insecure-random-token", node.lineno)
                         break
 
         # Track `var = <dynamic string expr>` so a later execute(var) call
@@ -290,6 +333,20 @@ class SecurityRuleVisitor(ast.NodeVisitor):
         if name in HTTP_VERBS and self._has_kwarg_false(node, "verify"):
             self._add("tls-verification-disabled", node.lineno)
 
+        # open(<dynamic path>) — candidate path traversal
+        if name == "open" and node.args and isinstance(node.func, ast.Name):
+            arg = node.args[0]
+            if self._is_dynamic_string(arg):
+                self._add("path-traversal-open", node.lineno)
+            elif isinstance(arg, ast.Name) and arg.id in self._dynamic_str_vars:
+                via_param = bool(self._cross_taint_stack) and arg.id in self._cross_taint_stack[-1]
+                self._add("path-traversal-open", node.lineno, via_param=via_param)
+
+        # response.set_cookie(...) missing secure=True / httponly=True
+        if name == "set_cookie":
+            if not (self._has_kwarg_true(node, "secure") and self._has_kwarg_true(node, "httponly")):
+                self._add("flask-cookie-missing-secure-flag", node.lineno)
+
         self.generic_visit(node)
 
 
@@ -320,12 +377,13 @@ def analyze_python_file(file_path: Path, relative_path: str) -> List[Finding]:
         return []
 
     source_lines = source.splitlines()
+    disabled = _disabled_rule_ids()
 
     # Pass 1: normal single-function-scope analysis, exactly as before
     # Phase 3. Also collects call_taint as a side effect — which local
     # functions were called with a dynamically-built argument, and at
     # which position.
-    pass1 = SecurityRuleVisitor(relative_path, source_lines)
+    pass1 = SecurityRuleVisitor(relative_path, source_lines, disabled_rules=disabled)
     pass1.visit(tree)
 
     if not pass1.call_taint:
@@ -355,7 +413,7 @@ def analyze_python_file(file_path: Path, relative_path: str) -> List[Finding]:
     if not seed_params:
         return pass1.findings
 
-    pass2 = SecurityRuleVisitor(relative_path, source_lines, seed_params=seed_params)
+    pass2 = SecurityRuleVisitor(relative_path, source_lines, seed_params=seed_params, disabled_rules=disabled)
     pass2.visit(tree)
 
     return _dedupe_findings(pass1.findings + pass2.findings)

@@ -9,11 +9,13 @@ class Finding(BaseModel):
     title: str
     severity: str  # "high" | "medium" | "low" — heuristic, pre-AI-validation
     cwe: Optional[str] = None
+    owasp: Optional[str] = None  # OWASP Top 10 (2021) category, e.g. "A03:2021-Injection"
     file: str
     function: Optional[str] = None
     line: int
     snippet: str
     description: str
+    remediation: Optional[str] = None  # general fix guidance, available pre-AI-validation
 
 
 class ValidatedFinding(Finding):

@@ -122,3 +122,28 @@ function safe_destructured_declaration() {
 function known_gap_require_child_process_exec_not_detected(cmd) {
   require("child_process").exec(cmd);
 }
+
+// ---- path-traversal-fs: fixed literal path is safe ----
+
+function safe_readfile_literal_path() {
+  fs.readFileSync("/etc/app/config.json");
+}
+
+// ---- insecure-random-token: crypto module is the safe choice ----
+
+function safe_random_token_uses_crypto_module() {
+  const token = crypto.randomUUID();
+  return token;
+}
+
+function safe_math_random_non_secret_variable() {
+  // Math.random() use is fine when the variable isn't security-named
+  const diceRoll = Math.random();
+  return diceRoll;
+}
+
+// ---- cookie-missing-secure-flag: both flags present is safe ----
+
+function safe_cookie_with_both_flags(res, sessionId) {
+  res.cookie("session_id", sessionId, { secure: true, httpOnly: true });
+}

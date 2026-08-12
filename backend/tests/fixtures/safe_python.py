@@ -16,6 +16,7 @@ import hmac
 import json
 import yaml
 import requests
+import random
 
 
 # ---- sql-injection-string-build: parameterized queries are safe ----
@@ -143,4 +144,31 @@ def safe_call_target_not_name_or_attribute(get_handler):
     # Call node itself — neither ast.Name nor ast.Attribute. Exercises
     # the fallback branch in SecurityRuleVisitor._call_name/_call_root.
     return get_handler()()
+
+
+# ---- path-traversal-open: fixed literal path is safe ----
+
+def safe_open_literal_path():
+    return open("/etc/app/config.json")
+
+
+# ---- insecure-random-token: secrets module is the safe choice ----
+
+def safe_random_token_uses_secrets_module():
+    import secrets
+    token = secrets.token_urlsafe(32)
+    return token
+
+
+def safe_random_non_secret_variable():
+    # "random" module use is fine when the variable isn't security-named
+    dice_roll = random.randint(1, 6)
+    return dice_roll
+
+
+# ---- flask-cookie-missing-secure-flag: both flags present is safe ----
+
+def safe_cookie_with_both_flags(response, session_id):
+    response.set_cookie("session_id", session_id, secure=True, httponly=True)
+    return response
 
