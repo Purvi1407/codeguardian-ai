@@ -5,6 +5,7 @@ from app.services.repo_processor import (
     clone_repository, cleanup_repository, get_default_branch, RepoProcessorError,
 )
 from app.services.scan_service import build_file_metadata
+from app.services.finding_filters import filter_files_by_language
 
 router = APIRouter()
 
@@ -16,6 +17,10 @@ def scan_repository(request: ScanRequest):
     into functions/classes with line numbers. This is Module 1 + Module 2
     of the pipeline (Repository Processor + Parser) — no vulnerability
     detection yet, that's Module 3.
+
+    `language_filter` (Phase 6) is the only filter field relevant here —
+    severity/rule/search filters apply to findings, which this endpoint
+    doesn't produce.
     """
     try:
         repo_path = clone_repository(request.github_url, request.branch)
@@ -25,6 +30,7 @@ def scan_repository(request: ScanRequest):
     try:
         branch = request.branch or get_default_branch(repo_path)
         files = build_file_metadata(repo_path)
+        files = filter_files_by_language(files, request.language_filter)
         languages = sorted({f.language for f in files})
 
         return ScanResponse(

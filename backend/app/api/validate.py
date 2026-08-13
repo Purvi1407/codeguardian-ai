@@ -6,6 +6,7 @@ from app.services.repo_processor import (
     clone_repository, cleanup_repository, get_default_branch, RepoProcessorError,
 )
 from app.services.scan_service import build_file_metadata_and_findings
+from app.services.finding_filters import build_language_lookup, filter_files_by_language, filter_findings
 from app.ai.validator import validate_findings, AIValidationError
 from app.ai.client import get_client, AIConfigError
 
@@ -22,6 +23,12 @@ def validate_repository(request: ScanRequest):
 
     Fails fast on missing OPENAI_API_KEY, before cloning anything —
     no point spending clone/parse time if we can't finish the pipeline.
+
+    Phase 6: severity_filter / language_filter / rule_filter / search on
+    the request are applied to the CANDIDATE findings BEFORE AI
+    validation runs, not just to the final response — a finding
+    filtered out never costs an API call or a cache write. See README
+    "Phase 6" design notes for why that ordering was chosen deliberately.
     """
     try:
         get_client()
@@ -36,6 +43,17 @@ def validate_repository(request: ScanRequest):
     try:
         branch = request.branch or get_default_branch(repo_path)
         files, candidate_findings = build_file_metadata_and_findings(repo_path)
+
+        language_lookup = build_language_lookup(files)
+        candidate_findings = filter_findings(
+            candidate_findings,
+            language_lookup=language_lookup,
+            severity=request.severity_filter,
+            languages=request.language_filter,
+            rules=request.rule_filter,
+            search=request.search,
+        )
+        files = filter_files_by_language(files, request.language_filter)
         languages = sorted({f.language for f in files})
 
         try:
