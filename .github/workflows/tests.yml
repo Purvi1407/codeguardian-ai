@@ -33,6 +33,8 @@ jobs:
             --cov=app.analyzer \
             --cov=app.parser \
             --cov=app.ai \
+            --cov=app.api \
+            --cov=app.services \
             --cov-report=term-missing \
             --cov-report=xml
 
@@ -42,3 +44,20 @@ jobs:
         with:
           name: coverage-report
           path: backend/coverage.xml
+
+  frontend-logic-tests:
+    name: Frontend pure-logic tests (Node, no DOM)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run pure-logic tests extracted from app/static/index.html
+        working-directory: backend
+        run: node --test tests/frontend/pure_logic.test.js

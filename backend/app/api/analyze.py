@@ -7,6 +7,7 @@ from app.services.repo_processor import (
 )
 from app.services.scan_service import build_file_metadata_and_findings
 from app.services.finding_filters import build_language_lookup, filter_files_by_language, filter_findings
+from app.services.dashboard import compute_summary
 
 router = APIRouter()
 
@@ -55,6 +56,7 @@ def analyze_repository(request: ScanRequest):
             finding_count=len(findings),
             files=files,
             findings=findings,
+            summary=compute_summary(findings),
         )
     finally:
         cleanup_repository(repo_path)

@@ -31,6 +31,18 @@ class ValidatedFinding(Finding):
     things_to_verify: List[str] = []
 
 
+class ScanSummary(BaseModel):
+    """Phase 7 (Dashboard & UX): a glanceable rollup of a finding list —
+    computed fresh from whatever findings are in a given response
+    (post-filter, if Phase 6 filters were applied), not persisted or
+    compared against any prior scan. See app/services/dashboard.py for
+    the actual computation and its documented, deliberately-simple
+    weighting."""
+    risk_score: int  # 0-100, weighted by severity, capped — see dashboard.py
+    severity_distribution: dict  # e.g. {"high": 3, "medium": 1}
+    rule_distribution: dict  # e.g. {"sql-injection-string-build": 2}
+
+
 class AnalyzeResponse(BaseModel):
     repository: str
     branch: str
@@ -39,6 +51,7 @@ class AnalyzeResponse(BaseModel):
     finding_count: int
     files: List[FileMetadata]
     findings: List[Finding]
+    summary: ScanSummary
 
 
 class ValidateResponse(BaseModel):
@@ -50,4 +63,5 @@ class ValidateResponse(BaseModel):
     verified_finding_count: int   # what the AI actually confirmed (Module 4)
     findings: List[ValidatedFinding]  # verified=True only, sorted by confidence/severity
     dismissed: List[ValidatedFinding]  # verified=False, kept for transparency/debugging
+    summary: ScanSummary  # computed over `findings` (verified) only, not `dismissed`
 

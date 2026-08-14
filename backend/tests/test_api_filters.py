@@ -184,6 +184,48 @@ class TestValidateFilters:
         assert len(called_with) == 2
 
 
+class TestSummaryInResponse:
+    def test_analyze_response_includes_summary(self):
+        resp = client.post("/analyze", json={"github_url": "https://github.com/x/y"})
+        assert resp.status_code == 200
+        summary = resp.json()["summary"]
+        assert "risk_score" in summary
+        assert "severity_distribution" in summary
+        assert "rule_distribution" in summary
+        assert summary["severity_distribution"] == {"high": 1, "low": 1}
+
+    def test_analyze_summary_reflects_filtered_findings_not_unfiltered(self):
+        resp = client.post("/analyze", json={"github_url": "https://github.com/x/y", "severity_filter": ["high"]})
+        assert resp.status_code == 200
+        summary = resp.json()["summary"]
+        assert summary["severity_distribution"] == {"high": 1}
+
+    def test_validate_response_includes_summary(self):
+        with patch("app.api.validate.validate_findings") as mock_validate:
+            mock_validate.side_effect = lambda findings: [make_validated(f) for f in findings]
+            resp = client.post("/validate", json={"github_url": "https://github.com/x/y"})
+
+        assert resp.status_code == 200
+        summary = resp.json()["summary"]
+        assert "risk_score" in summary
+
+    def test_validate_summary_computed_over_verified_only_not_dismissed(self):
+        with patch("app.api.validate.validate_findings") as mock_validate:
+            # First finding verified, second dismissed
+            mock_validate.side_effect = lambda findings: [
+                make_validated(findings[0], verified=True),
+                make_validated(findings[1], verified=False),
+            ]
+            resp = client.post("/validate", json={"github_url": "https://github.com/x/y"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["findings"]) == 1
+        assert len(body["dismissed"]) == 1
+        # Summary should only reflect the 1 verified finding, not both
+        assert sum(body["summary"]["severity_distribution"].values()) == 1
+
+
 class TestErrorHandling:
     """Confirms each endpoint's error paths actually produce the
     documented status code/body, not just that the happy path works."""

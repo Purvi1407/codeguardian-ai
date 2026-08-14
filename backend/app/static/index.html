@@ -246,6 +246,83 @@
     button.run{width:100%;}
     .modules{text-align:left;}
   }
+
+  /* Phase 7: filters */
+  .filters-row{margin-top:12px;}
+  .filters-toggle{
+    background:none; border:none; color:var(--text-muted); cursor:pointer;
+    font-family:'JetBrains Mono',monospace; font-size:0.76rem; padding:4px 0;
+  }
+  .filters-toggle:hover{color:var(--text);}
+  .filters-panel{
+    display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--hairline);
+    flex-direction:column; gap:12px;
+  }
+  .filters-panel.open{display:flex;}
+  .filter-group{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .filter-group-label{
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:var(--text-muted);
+    text-transform:uppercase; letter-spacing:0.04em;
+  }
+  .filter-chip{
+    display:flex; align-items:center; gap:6px; cursor:pointer;
+    font-size:0.84rem; color:var(--text-muted); user-select:none;
+  }
+  .filter-chip input{accent-color:var(--signal);}
+  .filter-chip:has(input:checked){color:var(--text);}
+  .search-input{
+    background:var(--surface-2); border:1px solid var(--hairline); color:var(--text);
+    font-family:'JetBrains Mono',monospace; font-size:0.85rem;
+    padding:10px 12px; border-radius:8px; width:100%;
+  }
+  .search-input::placeholder{color:var(--text-muted);}
+  .clear-filters{
+    background:none; border:none; color:var(--signal); cursor:pointer;
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; padding:0;
+    text-align:left; width:fit-content;
+  }
+  .clear-filters:hover{text-decoration:underline;}
+
+  /* Phase 7: dashboard summary */
+  .dashboard-panel{display:none;}
+  .risk-score-row{display:flex; gap:24px; align-items:center; flex-wrap:wrap;}
+  .risk-score{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    width:84px; height:84px; border-radius:50%; border:3px solid var(--hairline);
+    flex-shrink:0; transition:border-color 0.3s ease;
+  }
+  .risk-score.risk-low{border-color:var(--verified);}
+  .risk-score.risk-medium{border-color:var(--medium);}
+  .risk-score.risk-high{border-color:var(--danger);}
+  .risk-score-value{font-family:'Space Grotesk',sans-serif; font-size:1.5rem; font-weight:700; line-height:1;}
+  .risk-score-label{
+    font-family:'JetBrains Mono',monospace; font-size:0.6rem; color:var(--text-muted);
+    text-transform:uppercase; margin-top:3px; letter-spacing:0.03em;
+  }
+  .severity-bars{flex:1 1 200px; min-width:180px; display:flex; flex-direction:column; gap:9px;}
+  .severity-bar-row{display:flex; align-items:center; gap:10px;}
+  .severity-bar-label{
+    font-family:'JetBrains Mono',monospace; font-size:0.7rem; text-transform:uppercase;
+    color:var(--text-muted); width:56px; flex-shrink:0;
+  }
+  .severity-bar-track{
+    flex:1; height:8px; border-radius:4px; background:var(--surface-2);
+    overflow:hidden; border:1px solid var(--hairline);
+  }
+  .severity-bar-fill{height:100%; border-radius:4px; transition:width 0.5s ease;}
+  .severity-bar-fill.sev-high{background:var(--danger);}
+  .severity-bar-fill.sev-medium{background:var(--medium);}
+  .severity-bar-fill.sev-low{background:var(--low);}
+  .severity-bar-count{
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:var(--text-muted);
+    width:20px; text-align:right; flex-shrink:0;
+  }
+
+  @media (max-width:520px){
+    .risk-score-row{flex-direction:column; align-items:flex-start;}
+    .severity-bars{width:100%;}
+    .filter-group{gap:8px;}
+  }
 </style>
 </head>
 <body>
@@ -284,6 +361,19 @@
       <span class="pulse"></span>
       <span id="statusText">Cloning repository…</span>
     </div>
+    <div class="filters-row">
+      <button type="button" class="filters-toggle" id="filtersToggle">Filters ▾</button>
+      <div class="filters-panel" id="filtersPanel">
+        <div class="filter-group">
+          <span class="filter-group-label">Severity</span>
+          <label class="filter-chip"><input type="checkbox" value="high" class="sevFilter"> High</label>
+          <label class="filter-chip"><input type="checkbox" value="medium" class="sevFilter"> Medium</label>
+          <label class="filter-chip"><input type="checkbox" value="low" class="sevFilter"> Low</label>
+        </div>
+        <input type="text" id="searchFilter" class="search-input" placeholder="Search findings — file, rule, description…">
+        <button type="button" class="clear-filters" id="clearFilters">Clear filters</button>
+      </div>
+    </div>
   </div>
 
   <div class="error-panel" id="errorPanel">
@@ -293,6 +383,17 @@
 
   <div class="results" id="results">
     <div class="meta-row" id="metaRow"></div>
+
+    <div class="panel dashboard-panel" id="dashboardPanel">
+      <div class="risk-score-row">
+        <div class="risk-score" id="riskScoreBadge">
+          <span class="risk-score-value" id="riskScoreValue">0</span>
+          <span class="risk-score-label">risk score</span>
+        </div>
+        <div class="severity-bars" id="severityBars"></div>
+      </div>
+    </div>
+
     <div class="panel gauge-panel" id="gaugePanel" style="display:none;">
       <div class="gauge-label">
         <span><b id="gaugeCandidates">0</b> candidate findings</span>
@@ -314,8 +415,8 @@
   </div>
 
   <div class="empty" id="emptyState">
-    <p class="big">Paste a public GitHub repo to scan it.</p>
-    <p>Quick scan runs the rule engine only — free, no API key needed.<br>Full validate adds AI review to cut candidates down to confirmed issues.</p>
+    <p class="big" id="emptyStateHeadline">Paste a public GitHub repo to scan it.</p>
+    <p id="emptyStateBody">Quick scan runs the rule engine only — free, no API key needed.<br>Full validate adds AI review to cut candidates down to confirmed issues.</p>
   </div>
 
   <footer>CodeGuardian AI · module 1 repository processor · module 2 parser · module 3 rule engine · module 4 AI validation</footer>
@@ -339,6 +440,84 @@ const dismissedList = document.getElementById('dismissedList');
 const dismissedSummary = document.getElementById('dismissedSummary');
 const modeAnalyzeLabel = document.getElementById('modeAnalyzeLabel');
 const modeValidateLabel = document.getElementById('modeValidateLabel');
+const filtersToggle = document.getElementById('filtersToggle');
+const filtersPanel = document.getElementById('filtersPanel');
+const searchFilterInput = document.getElementById('searchFilter');
+const clearFiltersBtn = document.getElementById('clearFilters');
+const dashboardPanel = document.getElementById('dashboardPanel');
+const riskScoreBadge = document.getElementById('riskScoreBadge');
+const riskScoreValue = document.getElementById('riskScoreValue');
+const severityBars = document.getElementById('severityBars');
+const emptyStateHeadline = document.getElementById('emptyStateHeadline');
+const emptyStateBody = document.getElementById('emptyStateBody');
+
+filtersToggle.addEventListener('click', () => {
+  const open = filtersPanel.classList.toggle('open');
+  filtersToggle.textContent = open ? 'Filters ▴' : 'Filters ▾';
+});
+
+clearFiltersBtn.addEventListener('click', () => {
+  document.querySelectorAll('.sevFilter').forEach(cb => { cb.checked = false; });
+  searchFilterInput.value = '';
+});
+
+/**
+ * Reads the current filter controls into the shape /analyze and
+ * /validate expect on ScanRequest (Phase 6: severity_filter, search —
+ * language_filter and rule_filter exist on the backend but have no UI
+ * control yet, since this repo is single-language-focus per scan in
+ * practice and there's no rule picker in this UI to drive rule_filter
+ * from). Omits a field entirely rather than sending an empty array/
+ * string, matching the backend's "None/empty == no filtering" contract.
+ */
+function collectActiveFilters(){
+  const severities = Array.from(document.querySelectorAll('.sevFilter:checked')).map(cb => cb.value);
+  const search = searchFilterInput.value.trim();
+  const filters = {};
+  if (severities.length) filters.severity_filter = severities;
+  if (search) filters.search = search;
+  return filters;
+}
+
+function hasActiveFilters(filters){
+  return Object.keys(filters).length > 0;
+}
+
+/** Pure function, no DOM — kept separate from renderDashboard so it's
+ * unit-testable on its own (see tests/frontend/pure_logic.test.js). */
+function riskClass(score){
+  if (score >= 60) return 'risk-high';
+  if (score >= 20) return 'risk-medium';
+  return 'risk-low';
+}
+
+function renderDashboard(summary){
+  if (!summary) { dashboardPanel.style.display = 'none'; return; }
+  const dist = summary.severity_distribution || {};
+  const total = Object.values(dist).reduce((a, b) => a + b, 0);
+  if (total === 0) { dashboardPanel.style.display = 'none'; return; }
+
+  riskScoreValue.textContent = summary.risk_score;
+  riskScoreBadge.className = 'risk-score ' + riskClass(summary.risk_score);
+
+  severityBars.innerHTML = '';
+  const order = ['high', 'medium', 'low'];
+  const maxCount = Math.max(1, ...order.map(s => dist[s] || 0));
+  order.forEach(sev => {
+    const count = dist[sev] || 0;
+    const pct = Math.round((count / maxCount) * 100);
+    const row = document.createElement('div');
+    row.className = 'severity-bar-row';
+    row.innerHTML = `
+      <span class="severity-bar-label">${sev}</span>
+      <div class="severity-bar-track"><div class="severity-bar-fill sev-${sev}" style="width:${pct}%;"></div></div>
+      <span class="severity-bar-count">${count}</span>
+    `;
+    severityBars.appendChild(row);
+  });
+
+  dashboardPanel.style.display = 'block';
+}
 
 document.querySelectorAll('input[name=mode]').forEach(r => {
   r.addEventListener('change', () => {
@@ -429,10 +608,13 @@ async function runScan(){
   const url = repoInput.value.trim();
   if (!url){ repoInput.focus(); return; }
   const mode = getMode();
+  const filters = collectActiveFilters();
+  const filtersActive = hasActiveFilters(filters);
 
   errorPanel.classList.remove('showing');
   results.classList.remove('showing');
   emptyState.style.display = 'none';
+  dashboardPanel.style.display = 'none';
   runBtn.disabled = true;
   statusRow.classList.add('showing');
   statusText.textContent = mode === 'validate'
@@ -443,7 +625,7 @@ async function runScan(){
     const resp = await fetch(`/${mode}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({github_url: url})
+      body: JSON.stringify({github_url: url, ...filters})
     });
     const data = await resp.json();
 
@@ -455,8 +637,13 @@ async function runScan(){
     }
 
     renderMeta(data);
+    renderDashboard(data.summary);
     findingsList.innerHTML = '';
     dismissedList.innerHTML = '';
+
+    const noResultsMessage = filtersActive
+      ? 'No findings match your current filters. Try clearing them to see the full result set.'
+      : null;
 
     if (mode === 'validate') {
       gaugePanel.style.display = 'block';
@@ -469,11 +656,13 @@ async function runScan(){
       document.getElementById('gaugeCaption').innerHTML =
         candidates > 0
           ? `AI confirmed <b>${verified} of ${candidates}</b> candidates as real, actionable issues.`
-          : `No candidate findings from the rule engine — nothing for the AI to review.`;
+          : (filtersActive
+              ? `No candidate findings matched your filters.`
+              : `No candidate findings from the rule engine — nothing for the AI to review.`);
 
       findingsCount.textContent = data.findings.length;
       if (data.findings.length === 0) {
-        findingsList.innerHTML = '<div class="empty"><p>No verified findings. Either the code is clean, or check "Dismissed" below to see what the rule engine flagged and why the AI ruled it out.</p></div>';
+        findingsList.innerHTML = `<div class="empty"><p>${noResultsMessage || 'No verified findings. Either the code is clean, or check "Dismissed" below to see what the rule engine flagged and why the AI ruled it out.'}</p></div>`;
       } else {
         data.findings.forEach(f => findingsList.appendChild(renderValidatedFinding(f)));
       }
@@ -495,7 +684,7 @@ async function runScan(){
       dismissedWrap.style.display = 'none';
       findingsCount.textContent = data.findings.length;
       if (data.findings.length === 0) {
-        findingsList.innerHTML = '<div class="empty"><p>No candidate findings from the rule engine on this repo.</p></div>';
+        findingsList.innerHTML = `<div class="empty"><p>${noResultsMessage || 'No candidate findings from the rule engine on this repo.'}</p></div>`;
       } else {
         data.findings.forEach(f => findingsList.appendChild(renderCandidateFinding(f)));
       }

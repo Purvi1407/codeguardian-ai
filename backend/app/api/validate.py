@@ -7,6 +7,7 @@ from app.services.repo_processor import (
 )
 from app.services.scan_service import build_file_metadata_and_findings
 from app.services.finding_filters import build_language_lookup, filter_files_by_language, filter_findings
+from app.services.dashboard import compute_summary
 from app.ai.validator import validate_findings, AIValidationError
 from app.ai.client import get_client, AIConfigError
 
@@ -88,6 +89,7 @@ def validate_repository(request: ScanRequest):
             verified_finding_count=len(verified),
             findings=verified,
             dismissed=dismissed,
+            summary=compute_summary(verified),
         )
     finally:
         cleanup_repository(repo_path)
