@@ -41,9 +41,11 @@ def build_file_metadata(repo_path: Path) -> List[FileMetadata]:
 
 def build_file_metadata_and_findings(repo_path: Path) -> Tuple[List[FileMetadata], List[Finding]]:
     """
-    Same as build_file_metadata, but also runs Module 3 (rule-based analyzer)
-    on every Python file. TS/JS analysis isn't implemented yet — same
-    documented tradeoff as the TS/JS parser itself.
+    Same as build_file_metadata, but also runs Module 3 (rule-based
+    analyzer) on every parseable file — Python via python_rules.py,
+    TS/JS/TSX via js_ts_rules.py (tree-sitter-based since Phase 2; both
+    languages have been fully covered since then, this docstring
+    previously undersold it).
     """
     files: List[FileMetadata] = []
     all_findings: List[Finding] = []
