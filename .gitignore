@@ -7,4 +7,5 @@ temp/
 uploads/
 .DS_Store
 backend/.coverage
-backend/cache/
+cache/
+data/

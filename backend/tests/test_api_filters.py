@@ -64,10 +64,13 @@ SAMPLE_FINDINGS = [
 
 
 @pytest.fixture(autouse=True)
-def mock_repo_pipeline():
+def mock_repo_pipeline(tmp_path, monkeypatch):
     """Mocks the parts of the pipeline that would otherwise need real
     network access (cloning a GitHub repo) — every test in this file
-    gets a fake, deterministic repo/scan result to filter against."""
+    gets a fake, deterministic repo/scan result to filter against.
+    Also isolates the Phase 9 feedback-store DB to a temp file, so
+    /validate calls in this file never touch the real project database."""
+    monkeypatch.setenv("CODEGUARDIAN_DB_FILE", str(tmp_path / "test_feedback.db"))
     with patch("app.api.scan.clone_repository", return_value="/fake/repo"), \
          patch("app.api.scan.get_default_branch", return_value="main"), \
          patch("app.api.scan.cleanup_repository"), \
@@ -182,6 +185,31 @@ class TestValidateFilters:
         assert resp.status_code == 200
         called_with = mock_validate.call_args[0][0]
         assert len(called_with) == 2
+
+    def test_validate_records_to_feedback_store(self):
+        """Phase 9: every /validate call should record its verdicts,
+        so /stats/rules and /stats/scans reflect real usage over time."""
+        from app.services import feedback_store
+
+        with patch("app.api.validate.validate_findings") as mock_validate:
+            mock_validate.side_effect = lambda findings: [make_validated(f) for f in findings]
+            client.post("/validate", json={"github_url": "https://github.com/x/y"})
+
+        stats = feedback_store.get_rule_stats()
+        assert len(stats) == 2  # two distinct rule_ids in SAMPLE_FINDINGS
+        history = feedback_store.get_scan_history()
+        assert len(history) == 1
+        assert history[0].repository == "https://github.com/x/y"
+
+    def test_validate_still_succeeds_if_feedback_store_write_fails(self):
+        """Best-effort contract: a feedback-store failure must not
+        break the actual /validate response."""
+        with patch("app.api.validate.validate_findings") as mock_validate, \
+             patch("app.api.validate.feedback_store.record_validations", side_effect=OSError("disk full")):
+            mock_validate.side_effect = lambda findings: [make_validated(f) for f in findings]
+            resp = client.post("/validate", json={"github_url": "https://github.com/x/y"})
+
+        assert resp.status_code == 200
 
 
 class TestSummaryInResponse:

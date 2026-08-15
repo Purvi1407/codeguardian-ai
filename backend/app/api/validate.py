@@ -8,6 +8,7 @@ from app.services.repo_processor import (
 from app.services.scan_service import build_file_metadata_and_findings
 from app.services.finding_filters import build_language_lookup, filter_files_by_language, filter_findings
 from app.services.dashboard import compute_summary
+from app.services import feedback_store
 from app.ai.validator import validate_findings, AIValidationError
 from app.ai.client import get_client, AIConfigError
 
@@ -80,8 +81,29 @@ def validate_repository(request: ScanRequest):
         verified.sort(key=lambda f: (severity_rank.get(f.severity, 3),
                                       confidence_rank.get(f.confidence, 3)))
 
+        repository = request.github_url.rstrip("/")
+        summary = compute_summary(verified)
+
+        # Phase 9: record this scan's verdicts for rule-effectiveness
+        # stats and scan history. Best-effort by design (see
+        # feedback_store.py's module docstring) — wrapped so a storage
+        # problem (e.g. a read-only filesystem) degrades to "this scan's
+        # feedback wasn't recorded" rather than failing a request that
+        # otherwise completed successfully and that the person is
+        # actively waiting on.
+        try:
+            feedback_store.record_validations(repository, validated)
+            feedback_store.record_scan(
+                repository, branch,
+                candidate_count=len(candidate_findings),
+                verified_count=len(verified),
+                risk_score=summary.risk_score,
+            )
+        except Exception:
+            pass
+
         return ValidateResponse(
-            repository=request.github_url.rstrip("/"),
+            repository=repository,
             branch=branch,
             languages=languages,
             file_count=len(files),
@@ -89,7 +111,7 @@ def validate_repository(request: ScanRequest):
             verified_finding_count=len(verified),
             findings=verified,
             dismissed=dismissed,
-            summary=compute_summary(verified),
+            summary=summary,
         )
     finally:
         cleanup_repository(repo_path)

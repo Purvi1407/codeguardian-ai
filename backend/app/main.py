@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from app.api.scan import router as scan_router
 from app.api.analyze import router as analyze_router
 from app.api.validate import router as validate_router
+from app.api.stats import router as stats_router
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -28,6 +29,7 @@ app.add_middleware(
 app.include_router(scan_router)
 app.include_router(analyze_router)
 app.include_router(validate_router)
+app.include_router(stats_router)
 
 
 @app.get("/health")
