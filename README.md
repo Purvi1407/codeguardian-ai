@@ -137,7 +137,7 @@ Deployment
 
 Deployed on Render via the included Dockerfile. Root directory is the repo root (no nested subfolder). Set OPENAI_API_KEY (and optionally OPENAI_BASE_URL / OPENAI_MODEL for the Groq-compatible free tier) as environment variables in the Render service settings — never commit these to the repo.
 
-Phase 1 — Foundation & Safety: automated test suite
+## Phase 1 — Foundation & Safety: automated test suite
 
 Added backend/tests/ — a pytest suite covering the Python rule engine (app/analyzer/python_rules.py) and parser (app/parser/python_parser.py), plus a GitHub Actions workflow that runs it on every push/PR.
 
@@ -172,9 +172,7 @@ Why does CI only install requirements-dev.txt, not hit the OpenAI API? The test 
 
 Copy everything between the two marker lines below and paste it onto the end of your README.md file (after the Phase 1 section, which should currently be the last thing in the file).
 
----START COPYING BELOW THIS LINE---
-
-Phase 2 — Parsing Engine: tree-sitter for JS/TS/TSX
+## Phase 2 — Parsing Engine: tree-sitter for JS/TS/TSX
 
 Replaced the regex-based JS/TS parser and analyzer with tree-sitter. This was the single item both the take-home feedback and this project's own README called out as the highest-leverage next step, since the old approach was already documented as a known limitation on both the parser and analyzer side.
 
