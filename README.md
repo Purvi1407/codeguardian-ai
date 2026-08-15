@@ -68,7 +68,7 @@ You need to test the real API call yourself — set OPENAI_API_KEY, hit /validat
 
 Setup
 export OPENAI_API_KEY=sk-...
-# optional — defaults to gpt-4o-mini for cost; override for a stronger model
+#optional — defaults to gpt-4o-mini for cost; override for a stronger model
 export OPENAI_MODEL=gpt-4o
 Design notes (for defending decisions)
 Why batch findings into one request instead of one call per finding? Direct cost/latency tradeoff. A repo with 50 candidates would mean 50 separate API calls at ~1s+ each; batching 8 per call cuts that to ~7 calls. Tradeoff: harder to parse (need to map results back by index), which is why structured output (JSON schema, strict: true) is used instead of free-text parsing — reliability without giving up the cost savings.
