@@ -11,7 +11,9 @@ from app.services.dashboard import compute_summary
 from app.services import feedback_store
 from app.ai.validator import validate_findings, AIValidationError
 from app.ai.client import get_client, AIConfigError
+from app.core.logging_config import get_logger
 
+logger = get_logger(__name__)
 router = APIRouter()
 
 
@@ -40,11 +42,14 @@ def validate_repository(request: ScanRequest):
     try:
         repo_path = clone_repository(request.github_url, request.branch)
     except RepoProcessorError as e:
+        logger.warning("validate rejected repository=%s reason=%s", request.github_url, e)
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
         branch = request.branch or get_default_branch(repo_path)
         files, candidate_findings = build_file_metadata_and_findings(repo_path)
+        logger.info("validate candidates repository=%s branch=%s count=%d",
+                    request.github_url, branch, len(candidate_findings))
 
         language_lookup = build_language_lookup(files)
         candidate_findings = filter_findings(
@@ -61,6 +66,7 @@ def validate_repository(request: ScanRequest):
         try:
             validated = validate_findings(candidate_findings)
         except AIValidationError as e:
+            logger.error("validate AI failure repository=%s error=%s", request.github_url, e)
             raise HTTPException(status_code=502, detail=str(e))
         except Exception as e:
             # Defense in depth: anything unexpected here still becomes a
@@ -68,10 +74,13 @@ def validate_repository(request: ScanRequest):
             # This exact bug happened during testing (an uncaught TypeError
             # from a None API response) — worth keeping this net in place
             # rather than assuming every failure mode has been anticipated.
+            logger.exception("validate unexpected AI error repository=%s", request.github_url)
             raise HTTPException(status_code=500, detail=f"Unexpected error during AI validation: {e}")
 
         verified = [f for f in validated if f.verified]
         dismissed = [f for f in validated if not f.verified]
+        logger.info("validate complete repository=%s verified=%d dismissed=%d",
+                    request.github_url, len(verified), len(dismissed))
 
         # Sort verified findings so the highest-confidence, highest-severity
         # issues are first — this ordering IS the product philosophy made
@@ -90,7 +99,9 @@ def validate_repository(request: ScanRequest):
         # problem (e.g. a read-only filesystem) degrades to "this scan's
         # feedback wasn't recorded" rather than failing a request that
         # otherwise completed successfully and that the person is
-        # actively waiting on.
+        # actively waiting on. Now (Phase 10) logged rather than silently
+        # swallowed, so a persistent storage problem is at least visible
+        # in the logs instead of invisible forever.
         try:
             feedback_store.record_validations(repository, validated)
             feedback_store.record_scan(
@@ -100,7 +111,7 @@ def validate_repository(request: ScanRequest):
                 risk_score=summary.risk_score,
             )
         except Exception:
-            pass
+            logger.warning("feedback store recording failed repository=%s", repository, exc_info=True)
 
         return ValidateResponse(
             repository=repository,

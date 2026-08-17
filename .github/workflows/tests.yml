@@ -37,6 +37,8 @@ jobs:
             --cov=app.services \
             --cov=app.cli \
             --cov=app.reports \
+            --cov=app.core \
+            --cov=app.main \
             --cov-report=term-missing \
             --cov-report=xml
 

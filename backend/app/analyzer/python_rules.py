@@ -124,13 +124,29 @@ class SecurityRuleVisitor(ast.NodeVisitor):
         window = self.source_lines[start - 1:end]
         return "\n".join(window)[:600]
 
-    def _add(self, rule_id: str, lineno: int, via_param: bool = False):
+    def _redact(self, snippet: str, secret_value: Optional[str]) -> str:
+        """Replaces the literal secret value with a fixed placeholder,
+        preserving everything else in the snippet (variable name,
+        quotes, surrounding code) so the finding stays exactly as
+        actionable — WHERE and WHAT KIND of secret, without echoing the
+        secret's actual value back out through this tool's own API
+        response, AI validation prompt (sent to a third party — OpenAI),
+        on-disk cache (Phase 5), or persisted feedback store (Phase 9).
+        Only called for rules that capture a literal secret value
+        (hardcoded-secret) — see README "Phase 10" design notes for why
+        this wasn't needed for insecure-random-token too."""
+        if not secret_value:
+            return snippet
+        return snippet.replace(secret_value, "<redacted>")
+
+    def _add(self, rule_id: str, lineno: int, via_param: bool = False, redact_value: Optional[str] = None):
         if rule_id in self._disabled_rules:
             return
         meta = RULES[rule_id]
         description = meta["description"]
         if via_param:
             description = description + CROSS_FUNCTION_NOTE
+        snippet = self._redact(self._snippet(lineno), redact_value)
         self.findings.append(Finding(
             rule_id=rule_id,
             title=meta["title"],
@@ -140,7 +156,7 @@ class SecurityRuleVisitor(ast.NodeVisitor):
             file=self.file_path,
             function=self._current_function(),
             line=lineno,
-            snippet=self._snippet(lineno),
+            snippet=snippet,
             description=description,
             remediation=meta.get("remediation"),
         ))
@@ -219,7 +235,7 @@ class SecurityRuleVisitor(ast.NodeVisitor):
             for target in node.targets:
                 if isinstance(target, ast.Name) and SECRET_NAME_PATTERN.search(target.id):
                     if len(node.value.value) > 3:  # skip trivial placeholders like ""
-                        self._add("hardcoded-secret", node.lineno)
+                        self._add("hardcoded-secret", node.lineno, redact_value=node.value.value)
                         break
 
         # A token/secret/password-named variable assigned from the

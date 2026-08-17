@@ -116,13 +116,21 @@ class JsTsSecurityVisitor:
         end = min(len(self.source_lines), lineno + 5)
         return "\n".join(self.source_lines[start - 1:end])[:600]
 
-    def _add(self, rule_id: str, lineno: int, via_param: bool = False):
+    def _redact(self, snippet: str, secret_value: Optional[str]) -> str:
+        """Same purpose and reasoning as python_rules.py's _redact —
+        see that method's docstring."""
+        if not secret_value:
+            return snippet
+        return snippet.replace(secret_value, "<redacted>")
+
+    def _add(self, rule_id: str, lineno: int, via_param: bool = False, redact_value: Optional[str] = None):
         if rule_id in self._disabled_rules:
             return
         meta = RULES[rule_id]
         description = meta["description"]
         if via_param:
             description = description + CROSS_FUNCTION_NOTE
+        snippet = self._redact(self._snippet(lineno), redact_value)
         self.findings.append(Finding(
             rule_id=rule_id,
             title=meta["title"],
@@ -132,7 +140,7 @@ class JsTsSecurityVisitor:
             file=self.file_path,
             function=self._current_function(),
             line=lineno,
-            snippet=self._snippet(lineno),
+            snippet=snippet,
             description=description,
             remediation=meta.get("remediation"),
         ))
@@ -353,7 +361,7 @@ class JsTsSecurityVisitor:
 
         literal = self._string_literal_value(value_node)
         if literal is not None and len(literal) > 3 and SECRET_NAME_PATTERN.search(var_name):
-            self._add("hardcoded-secret", self._line_of(node))
+            self._add("hardcoded-secret", self._line_of(node), redact_value=literal)
 
         if self._is_math_random_call(value_node) and SECRET_NAME_PATTERN.search(var_name):
             self._add("insecure-random-token", self._line_of(node))
